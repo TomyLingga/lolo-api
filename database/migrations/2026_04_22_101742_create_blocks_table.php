@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-class CreateContainerSizesTable extends Migration
+class CreateBlocksTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,10 +13,13 @@ class CreateContainerSizesTable extends Migration
      */
     public function up()
     {
-        Schema::create('container_sizes', function (Blueprint $table) {
+        Schema::create('blocks', function (Blueprint $table) {
             $table->id();
-            $table->string('code'); // 20FT, 40FT
-            $table->string('description')->nullable();
+            $table->foreignId('yard_id')->constrained()->cascadeOnDelete();
+            $table->string('block_code');
+            $table->integer('max_length')->nullable();
+            $table->integer('max_width')->nullable();
+            $table->integer('max_height')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
@@ -29,6 +32,6 @@ class CreateContainerSizesTable extends Migration
      */
     public function down()
     {
-        Schema::dropIfExists('container_sizes');
+        Schema::dropIfExists('blocks');
     }
 }

@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-class CreateContainerSizesTable extends Migration
+class CreateTaxesTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,10 +13,11 @@ class CreateContainerSizesTable extends Migration
      */
     public function up()
     {
-        Schema::create('container_sizes', function (Blueprint $table) {
+        Schema::create('taxes', function (Blueprint $table) {
             $table->id();
-            $table->string('code'); // 20FT, 40FT
-            $table->string('description')->nullable();
+            $table->string('name'); // PPN, PPh
+            $table->decimal('percentage', 5, 2);
+            $table->enum('type', ['ADD', 'DEDUCT']);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
@@ -29,6 +30,6 @@ class CreateContainerSizesTable extends Migration
      */
     public function down()
     {
-        Schema::dropIfExists('container_sizes');
+        Schema::dropIfExists('taxes');
     }
 }

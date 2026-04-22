@@ -4,7 +4,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-class CreateContainerSizesTable extends Migration
+class CreateContainerTypesTable extends Migration
 {
     /**
      * Run the migrations.
@@ -13,9 +13,9 @@ class CreateContainerSizesTable extends Migration
      */
     public function up()
     {
-        Schema::create('container_sizes', function (Blueprint $table) {
+        Schema::create('container_types', function (Blueprint $table) {
             $table->id();
-            $table->string('code'); // 20FT, 40FT
+            $table->string('code'); // DRY, REEFER
             $table->string('description')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
@@ -29,6 +29,6 @@ class CreateContainerSizesTable extends Migration
      */
     public function down()
     {
-        Schema::dropIfExists('container_sizes');
+        Schema::dropIfExists('container_types');
     }
 }
