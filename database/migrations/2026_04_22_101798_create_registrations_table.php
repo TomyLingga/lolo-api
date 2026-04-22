@@ -20,7 +20,6 @@ class CreateRegistrationsTable extends Migration
             $table->string('container_number');
             $table->foreignId('container_size_id')->constrained();
             $table->foreignId('container_type_id')->constrained();
-            $table->foreignId('cargo_status_id')->constrained();
 
             $table->string('no_do_jo')->nullable();
             $table->string('shipper_tenant')->nullable();

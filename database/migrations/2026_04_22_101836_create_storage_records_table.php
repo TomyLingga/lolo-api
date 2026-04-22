@@ -16,6 +16,7 @@ class CreateStorageRecordsTable extends Migration
         Schema::create('storage_records', function (Blueprint $table) {
             $table->id();
             $table->foreignId('registration_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('cargo_status_id')->constrained();
             $table->foreignId('yard_id')->constrained();
             $table->foreignId('block_id')->constrained();
             $table->foreignId('moved_by')->constrained('users');

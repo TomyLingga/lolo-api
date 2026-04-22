@@ -20,4 +20,8 @@ class StorageRecord extends Model
     public function block() {
         return $this->belongsTo(Block::class);
     }
+
+    public function cargoStatus() {
+        return $this->belongsTo(CargoStatus::class);
+    }
 }

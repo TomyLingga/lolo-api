@@ -25,4 +25,9 @@ class LoloRecord extends Model
     public function createdBy() {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+
+    public function cargoStatus() {
+        return $this->belongsTo(CargoStatus::class);
+    }
 }

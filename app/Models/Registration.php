@@ -17,10 +17,6 @@ class Registration extends Model
         return $this->belongsTo(ContainerType::class, 'container_type_id');
     }
 
-    public function cargoStatus() {
-        return $this->belongsTo(CargoStatus::class);
-    }
-
     public function storageRecords() {
         return $this->hasMany(StorageRecord::class);
     }

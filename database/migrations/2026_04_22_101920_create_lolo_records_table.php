@@ -16,6 +16,7 @@ class CreateLoloRecordsTable extends Migration
         Schema::create('lolo_records', function (Blueprint $table) {
             $table->id();
             $table->foreignId('registration_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('cargo_status_id')->constrained();
             $table->foreignId('created_by')->constrained('users');
 
             $table->enum('operation_type', ['LIFT_ON', 'LIFT_OFF']);
