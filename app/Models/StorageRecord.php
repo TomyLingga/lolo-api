@@ -24,4 +24,8 @@ class StorageRecord extends Model
     public function cargoStatus() {
         return $this->belongsTo(CargoStatus::class);
     }
+
+    public function movedBy() {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 }

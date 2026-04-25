@@ -30,7 +30,7 @@ class Registration extends Model
     }
 
     public function freightForwarders() {
-        return $this->hasOne(FreightForwarders::class);
+        return $this->belongsTo(FreightForwarders::class, 'freight_forwarder_id');
     }
 
     public function createdBy() {

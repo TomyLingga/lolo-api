@@ -26,6 +26,7 @@ class CreateRegistrationsTable extends Migration
 
             $table->enum('record_status', ['OPEN', 'CLOSED'])->default('OPEN');
             $table->boolean('invoiced')->default(false);
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
     }

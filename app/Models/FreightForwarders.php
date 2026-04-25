@@ -10,6 +10,6 @@ class FreightForwarders extends Model
     protected $guarded = [];
 
     public function registration() {
-        return $this->belongsTo(Registration::class);
+        return $this->hasMany(Registration::class);
     }
 }
