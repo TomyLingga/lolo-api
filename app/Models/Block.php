@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 class Block extends Model
 {
     protected $guarded = [];
-
+    protected $hidden = ['created_at', 'updated_at'];
     public function yard() {
         return $this->belongsTo(Yard::class);
     }

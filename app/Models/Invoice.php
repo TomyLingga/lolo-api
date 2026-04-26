@@ -18,4 +18,9 @@ class Invoice extends Model
     {
         return $this->belongsTo(User::class, 'generated_by');
     }
+
+    public function invoiceRegistrations()
+    {
+        return $this->hasMany(InvoiceRegistration::class);
+    }
 }

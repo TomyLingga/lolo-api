@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\API\Invoice\InvoiceController;
 use App\Http\Controllers\API\UserController;
 use App\Http\Controllers\API\Master\BlockController;
 use App\Http\Controllers\API\Master\CargoStatusController;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\Route;
 
 // ─── Public ──────────────────────────────────────────────────────────────────
 Route::post('/login', [AuthController::class, 'login']);
+Route::get('/invoices/{id}/pdf',                                        [InvoiceController::class, 'exportPdf']);
+
 
 // ─── Authenticated ────────────────────────────────────────────────────────────
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -80,6 +83,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::put('/lolo-records/{id}',                [LoloRecordController::class, 'update']);
         Route::put('/storage-records/{id}',             [StorageRecordController::class, 'update']);
 
+        Route::delete('/invoices/{id}',                  [InvoiceController::class, 'destroy']);
+
     });
 
     // ─── Petugas + Admin — read master data & operasional ────────────────────
@@ -132,5 +137,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/registrations/{registrationId}/remarks',  [RegistrationRemarkController::class, 'index']);
         Route::post('/registrations/{registrationId}/remarks', [RegistrationRemarkController::class, 'store']);
 
+        Route::get('/invoices',                                                 [InvoiceController::class, 'index']);
+        Route::get('/invoices/{id}',                                            [InvoiceController::class, 'show']);
+        Route::get('/freight-forwarders/{ffId}/registrations/invoiceable',      [InvoiceController::class, 'getInvoiceableRegistrations']);
+        Route::post('/invoices',                                                [InvoiceController::class, 'store']);
+        Route::get('/invoices/{id}/pay',                                        [InvoiceController::class, 'pay']);
+        // Route::get('/invoices/{id}/pdf',                                        [InvoiceController::class, 'exportPdf']);
+        Route::put('/invoices/{id}',                                            [InvoiceController::class, 'update']);
     });
 });

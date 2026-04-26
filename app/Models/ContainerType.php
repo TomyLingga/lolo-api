@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 class ContainerType extends Model
 {
     protected $guarded = [];
-
+    protected $hidden = ['created_at', 'updated_at'];
     public function registrations()
     {
         return $this->hasMany(Registration::class);
