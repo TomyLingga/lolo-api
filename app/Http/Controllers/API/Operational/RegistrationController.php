@@ -27,6 +27,30 @@ class RegistrationController extends Controller
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
+    /**
+     * Relasi ringkas — dipakai untuk daftar (index, getOpen, getClosed, getNotInvoiced).
+     * Hanya kolom yang ditampilkan di tabel/list FE.
+     */
+    private function getListWith(): array
+    {
+        return [
+            'createdBy:id,name',
+            'freightForwarders:id,name',
+            'size:id,code,description',
+            'type:id,code,description',
+            // Hanya storage record aktif (end_date null) untuk info posisi di list
+            'activeStorageRecord.yard:id,name,code',
+            'activeStorageRecord.block:id,block_code',
+            'activeStorageRecord.cargoStatus:id,code,description',
+            // Lolo records hanya untuk info status terakhir
+            'loloRecords:id,registration_id,operation_type,cargo_status_id,lolo_at',
+            'loloRecords.cargoStatus:id,code,description',
+        ];
+    }
+
+    /**
+     * Relasi lengkap — dipakai hanya untuk show() (detail satu registrasi).
+     */
     private function getWith(): array
     {
         return [
@@ -75,7 +99,7 @@ class RegistrationController extends Controller
      */
     private function buildQuery(Request $request)
     {
-        $query = Registration::with($this->getWith())->orderBy('id', 'desc');
+        $query = Registration::with($this->getListWith())->orderBy('id', 'desc');
 
         // Filter tanggal berdasarkan lolo_at pertama (LIFT_OFF pertama)
         if ($request->filled('date_from')) {
@@ -106,18 +130,23 @@ class RegistrationController extends Controller
     private function validateBlockCapacity($blockId, $length, $width, $height)
     {
         $block = Block::find($blockId);
+
         if (! $block) {
             return 'Block tidak ditemukan.';
         }
+
         if ($length > $block->max_length) {
             return "Panjang melebihi kapasitas block (max: {$block->max_length}).";
         }
+
         if ($width > $block->max_width) {
             return "Lebar melebihi kapasitas block (max: {$block->max_width}).";
         }
+
         if ($height > $block->max_height) {
             return "Tinggi melebihi kapasitas block (max: {$block->max_height}).";
         }
+
         return null;
     }
 
@@ -253,6 +282,7 @@ class RegistrationController extends Controller
                 $request->pos_width,
                 $request->pos_height
             );
+
             if ($capacityError) {
                 return response()->json([
                     'message' => $capacityError,
@@ -567,6 +597,110 @@ class RegistrationController extends Controller
                 'errMsg'  => $e->getMessage(),
                 'success' => false,
             ], 500);
+        }
+    }
+
+    // ─── Dashboard ───────────────────────────────────────────────────────────
+
+    /**
+     * GET /dashboard/yard-map?container_number=
+     * Optimized: single eager-loaded query, PHP-side grouping to eliminate N+1.
+     */
+    public function yardMap(Request $request)
+    {
+        try {
+            $containerNumber = $request->filled('container_number')
+                ? strtoupper(trim($request->container_number))
+                : null;
+
+            // Single query: all active storage records with all relations eager-loaded
+            $storageRecords = StorageRecord::select(
+                    'id', 'block_id', 'yard_id', 'registration_id',
+                    'pos_length', 'pos_width', 'pos_height', 'start_date'
+                )
+                ->whereNull('end_date')
+                ->whereHas('registration', fn ($q) =>
+                    $q->where('record_status', 'OPEN')->where('is_active', true)
+                )
+                ->with([
+                    'registration:id,container_number,freight_forwarder_id,container_size_id,container_type_id,no_do_jo,shipper_tenant',
+                    'registration.freightForwarders:id,name',
+                    'registration.size:id,code,description',
+                    'registration.type:id,code,description',
+                ])
+                ->get();
+
+            // PHP-side grouping — no extra queries
+            $byBlock = $storageRecords->groupBy('block_id');
+
+            // Yards + blocks in one query
+            $yards = \App\Models\Yard::with(['blocks' => fn ($q) => $q->orderBy('block_code')])
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get();
+
+            $result = $yards->map(function ($yard) use ($byBlock, $containerNumber) {
+                $totalCapacity = 0;
+                $totalOccupied = 0;
+
+                $blocks = $yard->blocks->map(function ($block) use ($byBlock, $containerNumber, &$totalCapacity, &$totalOccupied) {
+                    $capacity = $block->max_length * $block->max_width * $block->max_height;
+                    $totalCapacity += $capacity;
+
+                    $records = $byBlock->get($block->id, collect());
+
+                    $registrations = $records->map(fn ($sr) => [
+                        'id'                => $sr->registration->id,
+                        'container_number'  => $sr->registration->container_number,
+                        'no_do_jo'          => $sr->registration->no_do_jo,
+                        'shipper_tenant'    => $sr->registration->shipper_tenant,
+                        'freight_forwarder' => $sr->registration->freightForwarders,
+                        'size'              => $sr->registration->size,
+                        'type'              => $sr->registration->type,
+                        'pos_length'        => $sr->pos_length,
+                        'pos_width'         => $sr->pos_width,
+                        'pos_height'        => $sr->pos_height,
+                        'start_date'        => $sr->start_date,
+                    ])->values();
+
+                    $occupied = $registrations->count();
+                    $totalOccupied += $occupied;
+
+                    $isHighlighted = $containerNumber && $registrations->contains(
+                        fn ($r) => str_contains($r['container_number'], $containerNumber)
+                    );
+
+                    return [
+                        'id'             => $block->id,
+                        'block_code'     => $block->block_code,
+                        'max_length'     => $block->max_length,
+                        'max_width'      => $block->max_width,
+                        'max_height'     => $block->max_height,
+                        'capacity'       => $capacity,
+                        'is_active'      => $block->is_active,
+                        'occupied_count' => $occupied,
+                        'is_highlighted' => $isHighlighted,
+                        'registrations'  => $registrations,
+                    ];
+                })->values();
+
+                return [
+                    'id'             => $yard->id,
+                    'name'           => $yard->name,
+                    'code'           => $yard->code,
+                    'total_blocks'   => $blocks->count(),
+                    'total_capacity' => $totalCapacity,
+                    'total_occupied' => $totalOccupied,
+                    'blocks'         => $blocks,
+                ];
+            })->values();
+
+            return response()->json([
+                'data'    => $result,
+                'message' => 'Berhasil mengambil data yard map',
+            ], 200);
+        } catch (QueryException $e) {
+            return $this->queryError($e);
         }
     }
 
