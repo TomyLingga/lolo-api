@@ -21,6 +21,11 @@ class Registration extends Model
         return $this->hasMany(StorageRecord::class);
     }
 
+    /** Storage record yang masih aktif (belum punya end_date) — posisi kontainer saat ini. */
+    public function activeStorageRecord() {
+        return $this->hasOne(StorageRecord::class)->whereNull('end_date')->latest();
+    }
+
     public function loloRecords() {
         return $this->hasMany(LoloRecord::class);
     }

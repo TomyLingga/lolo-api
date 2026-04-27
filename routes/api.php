@@ -124,6 +124,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/registrations/open',               [RegistrationController::class, 'getOpen']);      // OPEN only
         Route::get('/registrations/closed',             [RegistrationController::class, 'getClosed']);    // CLOSED only
         Route::get('/registrations/not-invoiced',       [RegistrationController::class, 'getNotInvoiced']); // CLOSED belum invoice
+        Route::get('/dashboard/yard-map',               [RegistrationController::class, 'yardMap']);      // Dashboard yard map
         Route::get('/registrations/{id}',               [RegistrationController::class, 'show']);
         Route::post('/registrations',                   [RegistrationController::class, 'store']);
         Route::post('/registrations/{id}/close',        [RegistrationController::class, 'close']);

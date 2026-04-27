@@ -57,37 +57,42 @@ class InvoiceController extends Controller
      * Hitung subtotal invoice (jumlah semua subtotal registrasi),
      * lalu aplikasikan pajak aktif dan kembalikan breakdown lengkap.
      */
-    private function calculateTotals(float $subtotal): array
+    private function calculateTotals(float $subtotal, array $taxIds = []): array
     {
-        $taxes      = Tax::where('is_active', true)->get();
-        $ppnAmount  = 0;
-        $pphAmount  = 0;
+        $taxes      = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
+        $totalAdd  = 0;
+        $totalDeduct  = 0;
         $taxDetails = [];
 
         foreach ($taxes as $tax) {
-            $amount = round($subtotal * ($tax->percentage / 100), 2);
+            if ($tax->value_type === 'PERCENTAGE') {
+                $amount = round($subtotal * ($tax->value / 100), 2);
+            } else {
+                $amount = $tax->value;
+            }
 
             if (strtoupper($tax->type) === 'ADD') {
-                $ppnAmount += $amount;
+                $totalAdd += $amount;
             } else {
-                $pphAmount += $amount;
+                $totalDeduct += $amount;
             }
 
             $taxDetails[] = [
                 'id'         => $tax->id,
                 'name'       => $tax->name,
                 'type'       => $tax->type,
-                'percentage' => $tax->percentage,
+                'value'      => $tax->value,
+                'value_type' => $tax->value_type,
                 'amount'     => $amount,
             ];
         }
 
-        $grandTotal = $subtotal + $ppnAmount - $pphAmount;
+        $grandTotal = $subtotal + $totalAdd - $totalDeduct;
 
         return [
             'subtotal'    => $subtotal,
-            'ppn'         => $ppnAmount,
-            'pph'         => $pphAmount,
+            'additions'   => $totalAdd,
+            'deductions'  => $totalDeduct,
             'grand_total' => $grandTotal,
             'tax_details' => $taxDetails,
         ];
@@ -205,9 +210,9 @@ class InvoiceController extends Controller
                 ], 404);
             }
 
-            // Preview total jika semua dipilih
+            // Preview total
             $totalSubtotal = $registrations->sum('subtotal');
-            $totals        = $this->calculateTotals($totalSubtotal);
+            $totals        = $this->calculateTotals($totalSubtotal, []); // No taxes applied in preview initially
 
             return response()->json([
                 'freight_forwarder' => $ff,
@@ -240,6 +245,8 @@ class InvoiceController extends Controller
                 'bank_account_number'   => 'required|string|max:50',
                 'signatory_name'        => 'required|string|max:255',
                 'signatory_position'    => 'required|string|max:255',
+                'tax_ids'               => 'nullable|array',
+                'tax_ids.*'             => 'integer|exists:taxes,id',
             ]);
 
             if ($validator->fails()) {
@@ -282,8 +289,9 @@ class InvoiceController extends Controller
                 $totalSubtotal  += $costs['subtotal'];
             }
 
-            // Hitung pajak dan grand total
-            $totals = $this->calculateTotals($totalSubtotal);
+            // Hitung pajak dan grand total menggunakan tax_ids yang dipilih
+            $taxIds = $request->input('tax_ids', []);
+            $totals = $this->calculateTotals($totalSubtotal, $taxIds);
 
             // Buat Invoice
             $invoice = Invoice::create([
@@ -315,6 +323,16 @@ class InvoiceController extends Controller
                 ]);
 
                 $reg->update(['invoiced' => true]);
+            }
+
+            // Simpan pajak ke pivot table invoice_taxes
+            foreach ($totals['tax_details'] as $taxData) {
+                $invoice->taxes()->attach($taxData['id'], [
+                    'tax_value'         => $taxData['value'],
+                    'tax_value_type'    => $taxData['value_type'],
+                    'tax_type'          => $taxData['type'],
+                    'calculated_amount' => $taxData['amount'],
+                ]);
             }
 
             DB::commit();

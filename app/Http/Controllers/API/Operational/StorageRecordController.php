@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API\Operational;
 
 use App\Http\Controllers\Controller;
+use App\Models\Block;
 use App\Models\Registration;
 use App\Models\StorageRecord;
 use App\Models\TariffStorage;
@@ -32,6 +33,29 @@ class StorageRecordController extends Controller
                   ->when($excludeRegistrationId, fn($q) => $q->where('id', '!=', $excludeRegistrationId));
             })
             ->exists();
+    }
+
+    private function validateBlockCapacity($blockId, $length, $width, $height)
+    {
+        $block = Block::find($blockId);
+
+        if (! $block) {
+            return 'Block tidak ditemukan.';
+        }
+
+        if ($length > $block->max_length) {
+            return "Panjang melebihi kapasitas block (max: {$block->max_length}).";
+        }
+
+        if ($width > $block->max_width) {
+            return "Lebar melebihi kapasitas block (max: {$block->max_width}).";
+        }
+
+        if ($height > $block->max_height) {
+            return "Tinggi melebihi kapasitas block (max: {$block->max_height}).";
+        }
+
+        return null;
     }
 
     /**
@@ -103,6 +127,20 @@ class StorageRecordController extends Controller
 
             if ($validator->fails()) {
                 return response()->json(['message' => $validator->errors()->first(), 'success' => false], 400);
+            }
+
+            $capacityError = $this->validateBlockCapacity(
+                $request->block_id,
+                $request->pos_length,
+                $request->pos_width,
+                $request->pos_height
+            );
+
+            if ($capacityError) {
+                return response()->json([
+                    'message' => $capacityError,
+                    'success' => false,
+                ], 400);
             }
 
             $movedAt = \Carbon\Carbon::parse($request->moved_at);

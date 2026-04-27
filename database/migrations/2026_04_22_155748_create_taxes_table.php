@@ -16,7 +16,8 @@ class CreateTaxesTable extends Migration
         Schema::create('taxes', function (Blueprint $table) {
             $table->id();
             $table->string('name'); // PPN, PPh
-            $table->decimal('percentage', 5, 2);
+            $table->decimal('value', 10, 2);
+            $table->enum('value_type', ['PERCENTAGE', 'NOMINAL']);
             $table->enum('type', ['ADD', 'DEDUCT']);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
