@@ -139,7 +139,6 @@ class LoloRecordController extends Controller
                 'operation_type'  => 'required|in:LIFT_ON,LIFT_OFF',
                 'vehicle_type'    => 'nullable|string|max:50',
                 'vehicle_number'  => 'nullable|string|max:20',
-                'operator_name'   => 'nullable|string|max:100',
                 'lolo_at'         => 'required|date',
             ];
 
@@ -323,7 +322,7 @@ class LoloRecordController extends Controller
                 'operation_type'  => $request->operation_type,
                 'vehicle_type'    => $request->vehicle_type,
                 'vehicle_number'  => $request->vehicle_number,
-                'operator_name'   => $request->operator_name,
+                'operator_name'   => $request->user()->name,
                 'tariff_price'    => $tariffPrice,
                 'lolo_at'         => $request->lolo_at,
             ]);
@@ -375,7 +374,6 @@ class LoloRecordController extends Controller
                 'cargo_status_id' => 'sometimes|required|exists:cargo_statuses,id',
                 'vehicle_type'    => 'nullable|string|max:50',
                 'vehicle_number'  => 'nullable|string|max:20',
-                'operator_name'   => 'nullable|string|max:100',
                 'lolo_at'         => 'sometimes|required|date',
             ]);
 
@@ -419,7 +417,7 @@ class LoloRecordController extends Controller
                 'cargo_status_id' => $request->cargo_status_id ?? $lolo->cargo_status_id,
                 'vehicle_type'    => $request->has('vehicle_type')   ? $request->vehicle_type   : $lolo->vehicle_type,
                 'vehicle_number'  => $request->has('vehicle_number') ? $request->vehicle_number : $lolo->vehicle_number,
-                'operator_name'   => $request->has('operator_name')  ? $request->operator_name  : $lolo->operator_name,
+                'operator_name'   => $request->user()->name,
                 'lolo_at'         => $request->lolo_at ?? $lolo->lolo_at,
                 'tariff_price'    => $tariffPrice,
             ]);

@@ -39,12 +39,15 @@ class RegistrationController extends Controller
             'size:id,code,description',
             'type:id,code,description',
             // Hanya storage record aktif (end_date null) untuk info posisi di list
-            'activeStorageRecord.yard:id,name,code',
-            'activeStorageRecord.block:id,block_code',
-            'activeStorageRecord.cargoStatus:id,code,description',
+            'storageRecords.yard:id,name,code',
+            'storageRecords.block:id,block_code',
+            'storageRecords.cargoStatus:id,code,description',
+            'storageRecords.movedBy:id,name,jabatan,bagian',
             // Lolo records hanya untuk info status terakhir
             'loloRecords:id,registration_id,operation_type,cargo_status_id,lolo_at',
             'loloRecords.cargoStatus:id,code,description',
+            'registrationRemarks',
+            'registrationRemarks.createdBy:id,name',
         ];
     }
 
@@ -262,7 +265,6 @@ class RegistrationController extends Controller
                 'remark'               => 'nullable|string',
                 'vehicle_type'         => 'nullable|string|max:50',
                 'vehicle_number'       => 'nullable|string|max:20',
-                'operator_name'        => 'nullable|string|max:100',
                 'lolo_at'              => 'required|date',  // = start_date storage otomatis
                 'yard_id'              => 'required|exists:yards,id',
                 'block_id'             => 'required|exists:blocks,id',
@@ -384,7 +386,7 @@ class RegistrationController extends Controller
                 'operation_type'  => 'LIFT_OFF',
                 'vehicle_type'    => $request->vehicle_type,
                 'vehicle_number'  => $request->vehicle_number,
-                'operator_name'   => $request->operator_name,
+                'operator_name'   => $request->user()->name,
                 'tariff_price'    => $tariffLolo->price_lift_off,
                 'lolo_at'         => $request->lolo_at,
             ]);
