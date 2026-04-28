@@ -26,6 +26,6 @@ class StorageRecord extends Model
     }
 
     public function movedBy() {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'moved_by');
     }
 }

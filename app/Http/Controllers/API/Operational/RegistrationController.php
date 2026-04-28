@@ -38,14 +38,12 @@ class RegistrationController extends Controller
             'freightForwarders:id,name',
             'size:id,code,description',
             'type:id,code,description',
-            // Hanya storage record aktif (end_date null) untuk info posisi di list
             'storageRecords.yard:id,name,code',
             'storageRecords.block:id,block_code',
             'storageRecords.cargoStatus:id,code,description',
             'storageRecords.movedBy:id,name,jabatan,bagian',
-            // Lolo records hanya untuk info status terakhir
-            'loloRecords:id,registration_id,operation_type,cargo_status_id,lolo_at',
             'loloRecords.cargoStatus:id,code,description',
+            'loloRecords.createdBy:id,name,jabatan,bagian',
             'registrationRemarks',
             'registrationRemarks.createdBy:id,name',
         ];

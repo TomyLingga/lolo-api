@@ -59,10 +59,10 @@ class InvoiceController extends Controller
      */
     private function calculateTotals(float $subtotal, array $taxIds = []): array
     {
-        $taxes      = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
-        $totalAdd  = 0;
-        $totalDeduct  = 0;
-        $taxDetails = [];
+        $taxes       = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
+        $totalAdd    = 0;
+        $totalDeduct = 0;
+        $taxDetails  = [];
 
         foreach ($taxes as $tax) {
             if ($tax->value_type === 'PERCENTAGE') {
@@ -575,35 +575,39 @@ class InvoiceController extends Controller
             }
 
             // Hitung breakdown pajak
+            // Hitung breakdown pajak
             $subtotal = $invoice->subtotal;
 
-            $taxSummary = [];   // ['add' => xxx, 'deduct' => xxx, dll]
+            $taxSummary   = [];
             $taxBreakdown = [];
 
             foreach ($taxes as $tax) {
-                $amount = round($subtotal * ($tax->percentage / 100), 2);
+                // Fix: pakai value + value_type, bukan percentage
+                if ($tax->value_type === 'PERCENTAGE') {
+                    $amount = round($subtotal * ($tax->value / 100), 2);
+                } else {
+                    $amount = $tax->value;
+                }
 
-                $type = strtolower($tax->type); // contoh: add / deduct
+                $type = strtolower($tax->type);
 
                 if (!isset($taxSummary[$type])) {
                     $taxSummary[$type] = 0;
                 }
-
                 $taxSummary[$type] += $amount;
 
                 $taxBreakdown[] = [
                     'name'       => $tax->name,
                     'type'       => $tax->type,
-                    'percentage' => $tax->percentage,
+                    'value'      => $tax->value,
+                    'value_type' => $tax->value_type,
                     'amount'     => $amount,
                 ];
             }
 
-            // Default fallback
             $totalAdd    = $taxSummary['add']    ?? 0;
             $totalDeduct = $taxSummary['deduct'] ?? 0;
-
-            $grandTotal = $subtotal + $totalAdd - $totalDeduct;
+            $grandTotal  = $subtotal + $totalAdd - $totalDeduct;
 
             // ─── Build HTML ─────────────────────────────────────────────
             $html = $this->buildInvoiceHtml(
@@ -676,10 +680,16 @@ class InvoiceController extends Controller
         // ── Tax rows ──────────────────────────────────────────────────
         $taxHtml = '';
         foreach ($taxBreakdown as $t) {
-            $sign    = strtoupper($t['type']) === 'ADD' ? '' : '-';
-            $amount  = $sign . 'Rp&nbsp;' . number_format($t['amount'], 0, ',', '.');
+            $sign   = strtoupper($t['type']) === 'ADD' ? '' : '-';
+            $amount = $sign . 'Rp&nbsp;' . number_format($t['amount'], 0, ',', '.');
+
+            // Label: "PPN (11%)" atau "Diskon (Rp 50.000)"
+            $valueLabel = $t['value_type'] === 'PERCENTAGE'
+                ? $t['name'] . ' (' . $t['value'] . '%)'
+                : $t['name'] . ' (Rp&nbsp;' . number_format($t['value'], 0, ',', '.') . ')';
+
             $taxHtml .= '<tr>'
-                . '<td colspan="6" style="text-align:right;padding:3px 8px;">' . $t['name'] . '</td>'
+                . '<td colspan="6" style="text-align:right;padding:3px 8px;">' . $valueLabel . '</td>'
                 . '<td style="text-align:right;padding:3px 8px;">' . $amount . '</td>'
                 . '</tr>';
         }

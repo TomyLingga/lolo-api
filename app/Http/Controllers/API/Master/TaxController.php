@@ -12,21 +12,23 @@ class TaxController extends BaseMasterController
 
     protected array $storeRules = [
         'name'       => 'required|string|max:100|unique:taxes,name',
-        'percentage' => 'required|numeric|min:0|max:100',
-        'type'       => 'required|in:ADD,DEDUCT',   // ADD=PPN, DEDUCT=PPh
+        'value'      => 'required|numeric|min:0',
+        'value_type' => 'required|in:PERCENTAGE,NOMINAL',
+        'type'       => 'required|in:ADD,DEDUCT',
         'is_active'  => 'boolean',
     ];
 
     protected array $updateRules = [
         'name'       => 'sometimes|required|string|max:100',
-        'percentage' => 'sometimes|required|numeric|min:0|max:100',
+        'value'      => 'sometimes|required|numeric|min:0',
+        'value_type' => 'sometimes|required|in:PERCENTAGE,NOMINAL',
         'type'       => 'sometimes|required|in:ADD,DEDUCT',
         'is_active'  => 'boolean',
     ];
 
     protected function buildUpdateRules(int|string $id): array
     {
-        $rules = $this->updateRules;
+        $rules         = $this->updateRules;
         $rules['name'] = 'sometimes|required|string|max:100|unique:taxes,name,' . $id;
         return $rules;
     }
