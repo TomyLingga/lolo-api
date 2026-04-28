@@ -13,7 +13,8 @@ class PetugasMiddleware
      */
     protected array $allowedRoles = [
         'admin',
-        'petugas'
+        'operator',
+        'finance'
     ];
 
     public function handle(Request $request, Closure $next)

@@ -85,7 +85,7 @@ class UserController extends Controller
                 'password' => 'required|string|min:8|confirmed',
                 'jabatan'  => 'nullable|string|max:255',
                 'bagian'   => 'nullable|string|max:255',
-                'role'     => 'required|in:admin,petugas',
+                'role'     => 'required|in:admin,operator,finance',
             ]);
 
             if ($validator->fails()) {
@@ -134,7 +134,7 @@ class UserController extends Controller
                 'email'   => 'sometimes|required|email|unique:users,email,' . $id,
                 'jabatan' => 'nullable|string|max:255',
                 'bagian'  => 'nullable|string|max:255',
-                'role'    => 'sometimes|required|in:admin,petugas',
+                'role'    => 'sometimes|required|in:admin,operator,finance',
             ]);
 
             if ($validator->fails()) {
