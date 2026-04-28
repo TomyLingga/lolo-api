@@ -30,6 +30,7 @@ class InvoiceController extends Controller
         return [
             'freightForwarder:id,name,address,contact_person,contact_number',
             'generatedBy:id,name',
+            'taxes:id,name,type,value,value_type',
             'invoiceRegistrations.registration.loloRecords.cargoStatus',
             'invoiceRegistrations.registration.storageRecords.cargoStatus',
             'invoiceRegistrations.registration.size',
@@ -65,10 +66,11 @@ class InvoiceController extends Controller
         $taxDetails  = [];
 
         foreach ($taxes as $tax) {
-            if ($tax->value_type === 'PERCENTAGE') {
+            // strtoupper() agar aman dari lowercase/uppercase
+            if (strtoupper($tax->value_type) === 'PERCENTAGE') {
                 $amount = round($subtotal * ($tax->value / 100), 2);
             } else {
-                $amount = $tax->value;
+                $amount = (float) $tax->value;
             }
 
             if (strtoupper($tax->type) === 'ADD') {
@@ -81,8 +83,8 @@ class InvoiceController extends Controller
                 'id'         => $tax->id,
                 'name'       => $tax->name,
                 'type'       => $tax->type,
-                'value'      => $tax->value,
-                'value_type' => $tax->value_type,
+                'value'      => (float) $tax->value,
+                'value_type' => strtoupper($tax->value_type), // normalize ke uppercase
                 'amount'     => $amount,
             ];
         }
@@ -576,20 +578,17 @@ class InvoiceController extends Controller
 
             // Hitung breakdown pajak
             // Hitung breakdown pajak
-            $subtotal = $invoice->subtotal;
+            // Ambil tax dari relasi invoice (bukan semua tax aktif)
+            $invoice->loadMissing('taxes');
 
+            $subtotal     = (float) $invoice->subtotal;
             $taxSummary   = [];
             $taxBreakdown = [];
 
-            foreach ($taxes as $tax) {
-                // Fix: pakai value + value_type, bukan percentage
-                if ($tax->value_type === 'PERCENTAGE') {
-                    $amount = round($subtotal * ($tax->value / 100), 2);
-                } else {
-                    $amount = $tax->value;
-                }
-
-                $type = strtolower($tax->type);
+            foreach ($invoice->taxes as $tax) {
+                // Gunakan calculated_amount dari pivot yang sudah dihitung saat store()
+                $amount = (float) $tax->pivot->calculated_amount;
+                $type   = strtolower($tax->type);
 
                 if (!isset($taxSummary[$type])) {
                     $taxSummary[$type] = 0;
@@ -599,8 +598,8 @@ class InvoiceController extends Controller
                 $taxBreakdown[] = [
                     'name'       => $tax->name,
                     'type'       => $tax->type,
-                    'value'      => $tax->value,
-                    'value_type' => $tax->value_type,
+                    'value'      => (float) $tax->pivot->tax_value,
+                    'value_type' => $tax->pivot->tax_value_type,
                     'amount'     => $amount,
                 ];
             }
