@@ -41,4 +41,9 @@ class Registration extends Model
     {
         return $this->hasMany(InvoiceRegistration::class);
     }
+
+    public function package()
+    {
+        return $this->belongsTo(Package::class);
+    }
 }

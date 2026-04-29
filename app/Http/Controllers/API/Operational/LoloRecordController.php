@@ -35,7 +35,7 @@ class LoloRecordController extends Controller
         $sr->update([
             'end_date'           => $endDate,
             'total_storage_days' => $days,
-            'total_storage_cost' => $days * $sr->storage_price_per_day,
+            'total_storage_cost' => $sr->calculateCost($days),
         ]);
     }
 
@@ -225,6 +225,7 @@ class LoloRecordController extends Controller
                     'container_size_id' => $registration->container_size_id,
                     'container_type_id' => $registration->container_type_id,
                     'cargo_status_id'   => $request->cargo_status_id,
+                    'package_id'        => $registration->package_id,
                 ])
                 ->where('is_active', true)
                 ->where('effective_date', '<=', $loloDate)
@@ -395,6 +396,7 @@ class LoloRecordController extends Controller
                         'container_size_id' => $lolo->registration->container_size_id,
                         'container_type_id' => $lolo->registration->container_type_id,
                         'cargo_status_id'   => $request->cargo_status_id,
+                        'package_id'        => $lolo->registration->package_id,
                     ])
                     ->where('is_active', true)
                     ->where('effective_date', '<=', Carbon::parse($lolo->lolo_at)->toDateString())

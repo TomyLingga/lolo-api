@@ -21,7 +21,7 @@ class TariffLoloController extends Controller
     public function index()
     {
         try {
-            $data = TariffLolo::with(['yard', 'containerSize', 'containerType', 'cargoStatus'])
+            $data = TariffLolo::with(['yard', 'containerSize', 'containerType', 'cargoStatus', 'package'])
                 ->orderBy('id', 'desc')
                 ->get();
 
@@ -42,7 +42,7 @@ class TariffLoloController extends Controller
     public function show($id)
     {
         try {
-            $data = TariffLolo::with(['yard', 'containerSize', 'containerType', 'cargoStatus'])->find($id);
+            $data = TariffLolo::with(['yard', 'containerSize', 'containerType', 'cargoStatus', 'package'])->find($id);
 
             if (!$data) {
                 return response()->json(['message' => $this->messageMissing], 404);
@@ -73,6 +73,7 @@ class TariffLoloController extends Controller
                 'container_size_id' => 'required|exists:container_sizes,id',
                 'container_type_id' => 'required|exists:container_types,id',
                 'cargo_status_id' => 'required|exists:cargo_statuses,id',
+                'package_id' => 'required|exists:packages,id',
                 'price_lift_off' => 'required|numeric',
                 'price_lift_on' => 'required|numeric',
                 'effective_date' => 'required|date',
@@ -90,6 +91,7 @@ class TariffLoloController extends Controller
                 'container_size_id' => $request->container_size_id,
                 'container_type_id' => $request->container_type_id,
                 'cargo_status_id' => $request->cargo_status_id,
+                'package_id' => $request->package_id,
                 'effective_date' => $request->effective_date,
             ])
             ->where('is_active', true)
@@ -107,7 +109,7 @@ class TariffLoloController extends Controller
             DB::commit();
 
             return response()->json([
-                'data' => $data->load(['yard', 'containerSize', 'containerType', 'cargoStatus']),
+                'data' => $data->load(['yard', 'containerSize', 'containerType', 'cargoStatus', 'package']),
                 'message' => $this->messageCreate,
                 'success' => true,
             ], 201);
@@ -143,6 +145,7 @@ class TariffLoloController extends Controller
                 'container_size_id' => $request->container_size_id ?? $data->container_size_id,
                 'container_type_id' => $request->container_type_id ?? $data->container_type_id,
                 'cargo_status_id' => $request->cargo_status_id ?? $data->cargo_status_id,
+                'package_id' => $request->package_id ?? $data->package_id,
                 'price_lift_off' => $request->price_lift_off ?? $data->price_lift_off,
                 'price_lift_on' => $request->price_lift_on ?? $data->price_lift_on,
                 'effective_date' => $request->effective_date ?? $data->effective_date,
@@ -151,7 +154,7 @@ class TariffLoloController extends Controller
             DB::commit();
 
             return response()->json([
-                'data' => $data,
+                'data' => $data->load(['yard', 'containerSize', 'containerType', 'cargoStatus', 'package']),
                 'message' => $this->messageUpdate,
                 'success' => true,
             ], 200);
@@ -233,6 +236,7 @@ class TariffLoloController extends Controller
                 'container_size_id' => $request->container_size_id,
                 'container_type_id' => $request->container_type_id,
                 'cargo_status_id' => $request->cargo_status_id,
+                'package_id' => $request->package_id,
             ])
             ->where('is_active', true)
             ->where('effective_date', '<=', $date)

@@ -221,7 +221,7 @@ class StorageRecordController extends Controller
                 $oldStorage->update([
                     'end_date'           => $endDate,
                     'total_storage_days' => $days,
-                    'total_storage_cost' => $days * $oldStorage->storage_price_per_day,
+                    'total_storage_cost' => $oldStorage->calculateCost($days),
                 ]);
             }
 
@@ -308,7 +308,7 @@ class StorageRecordController extends Controller
                         ->diffInDays(\Carbon\Carbon::parse($storage->end_date));
 
                     $updateData['total_storage_days'] = $days;
-                    $updateData['total_storage_cost'] = $days * $storage->storage_price_per_day;
+                    $updateData['total_storage_cost'] = $storage->calculateCost($days);
                 }
             }
 

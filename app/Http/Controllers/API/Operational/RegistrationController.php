@@ -38,6 +38,7 @@ class RegistrationController extends Controller
             'freightForwarders:id,name',
             'size:id,code,description',
             'type:id,code,description',
+            'package:id,name,code,free_time_days',
             'storageRecords.yard:id,name,code',
             'storageRecords.block:id,block_code',
             'storageRecords.cargoStatus:id,code,description',
@@ -59,6 +60,7 @@ class RegistrationController extends Controller
             'freightForwarders:id,name,contact_person,contact_number',
             'size:id,code,description',
             'type:id,code,description',
+            'package:id,name,code,free_time_days',
             'registrationRemarks.createdBy:id,name',
             'loloRecords.cargoStatus:id,code,description',
             'loloRecords.createdBy:id,name',
@@ -90,7 +92,7 @@ class RegistrationController extends Controller
         $sr->update([
             'end_date'           => $endDate,
             'total_storage_days' => $days,
-            'total_storage_cost' => $days * $sr->storage_price_per_day,
+            'total_storage_cost' => $sr->calculateCost($days),
         ]);
     }
 
@@ -258,6 +260,7 @@ class RegistrationController extends Controller
                 'container_size_id'    => 'required|exists:container_sizes,id',
                 'container_type_id'    => 'required|exists:container_types,id',
                 'cargo_status_id'      => 'required|exists:cargo_statuses,id',
+                'package_id'           => 'required|exists:packages,id',
                 'no_do_jo'             => 'nullable|string|max:100',
                 'shipper_tenant'       => 'nullable|string|max:255',
                 'remark'               => 'nullable|string',
@@ -321,6 +324,7 @@ class RegistrationController extends Controller
                     'container_size_id' => $request->container_size_id,
                     'container_type_id' => $request->container_type_id,
                     'cargo_status_id'   => $request->cargo_status_id,
+                    'package_id'        => $request->package_id,
                 ])
                 ->where('is_active', true)
                 ->where('effective_date', '<=', $startDate)
@@ -360,6 +364,7 @@ class RegistrationController extends Controller
                 'container_number'     => strtoupper($request->container_number),
                 'container_size_id'    => $request->container_size_id,
                 'container_type_id'    => $request->container_type_id,
+                'package_id'           => $request->package_id,
                 'no_do_jo'             => $request->no_do_jo,
                 'shipper_tenant'       => $request->shipper_tenant,
                 'record_status'        => 'OPEN',
@@ -451,6 +456,7 @@ class RegistrationController extends Controller
                 'shipper_tenant'       => 'nullable|string|max:255',
                 'container_size_id'    => 'sometimes|required|exists:container_sizes,id',
                 'container_type_id'    => 'sometimes|required|exists:container_types,id',
+                'package_id'           => 'sometimes|required|exists:packages,id',
             ]);
 
             if ($validator->fails()) {
@@ -463,6 +469,7 @@ class RegistrationController extends Controller
                 'shipper_tenant'       => $request->has('shipper_tenant') ? $request->shipper_tenant : $data->shipper_tenant,
                 'container_size_id'    => $request->container_size_id     ?? $data->container_size_id,
                 'container_type_id'    => $request->container_type_id     ?? $data->container_type_id,
+                'package_id'           => $request->package_id           ?? $data->package_id,
             ]);
 
             DB::commit();

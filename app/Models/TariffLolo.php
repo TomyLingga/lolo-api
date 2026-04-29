@@ -28,4 +28,9 @@ class TariffLolo extends Model
     {
         return $this->belongsTo(CargoStatus::class);
     }
+
+    public function package()
+    {
+        return $this->belongsTo(Package::class);
+    }
 }

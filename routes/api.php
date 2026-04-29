@@ -10,6 +10,7 @@ use App\Http\Controllers\API\Master\ContainerTypeController;
 use App\Http\Controllers\API\Master\FreightForwarderController;
 use App\Http\Controllers\API\Master\TaxController;
 use App\Http\Controllers\API\Master\YardController;
+use App\Http\Controllers\API\Master\PackageController;
 use App\Http\Controllers\API\Operational\LoloRecordController;
 use App\Http\Controllers\API\Operational\RegistrationController;
 use App\Http\Controllers\API\Operational\RegistrationRemarkController;
@@ -85,6 +86,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::delete('/invoices/{id}',                  [InvoiceController::class, 'destroy']);
 
+        Route::post('/master/package',                   [PackageController::class, 'store']);
+        Route::put('/master/package/{id}',               [PackageController::class, 'update']);
+        Route::delete('/master/package/{id}',            [PackageController::class, 'destroy']);
     });
 
     // ─── Petugas + Admin — read master data & operasional ────────────────────
@@ -145,5 +149,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/invoices/{id}/pay',                                        [InvoiceController::class, 'pay']);
         // Route::get('/invoices/{id}/pdf',                                        [InvoiceController::class, 'exportPdf']);
         Route::put('/invoices/{id}',                                            [InvoiceController::class, 'update']);
+
+        Route::get('/master/package',                   [PackageController::class, 'index']);
+        Route::get('/master/package/{id}',              [PackageController::class, 'show']);
     });
 });
