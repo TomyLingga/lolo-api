@@ -503,6 +503,47 @@ class WarehouseRegistrationController extends Controller
         }
     }
 
+    /**
+     * GET /dashboard/warehouse-map
+     * Menampilkan semua warehouse dengan status chamber saat ini.
+     */
+    public function warehouseMap()
+    {
+        try {
+            $data = \App\Models\Warehouse::with(['chambers' => function ($q) {
+                $q->where('is_active', true);
+            }])
+            ->where('is_active', true)
+            ->get()
+            ->map(function ($warehouse) {
+                $chambers = $warehouse->chambers->map(function ($chamber) {
+                    // Cari registrasi aktif hari ini
+                    $activeReg = WarehouseRegistration::with('freightForwarder:id,name')
+                        ->where('chamber_id', $chamber->id)
+                        ->where('is_active', true)
+                        ->where('record_status', 'ACTIVE')
+                        ->whereDate('rent_start', '<=', now())
+                        ->whereDate('rent_end', '>=', now())
+                        ->first();
+
+                    return array_merge($chamber->toArray(), [
+                        'active_registration' => $activeReg
+                    ]);
+                });
+
+                return array_merge($warehouse->toArray(), [
+                    'chambers'       => $chambers,
+                    'total_chambers' => $chambers->count(),
+                    'occupied_count' => $chambers->whereNotNull('active_registration')->count(),
+                ]);
+            });
+
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+        } catch (\Exception $e) {
+            return $this->serverError($e);
+        }
+    }
+
     // ─── Helper: Available Chambers ──────────────────────────────────────────
 
     /**

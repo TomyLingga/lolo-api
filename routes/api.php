@@ -209,6 +209,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/warehouse-registrations/{id}/remarks',    [WarehouseRegistrationController::class, 'indexRemarks']);
         Route::post('/warehouse-registrations/{id}/remarks',   [WarehouseRegistrationController::class, 'storeRemark']);
         Route::get('/warehouses/available-chambers',           [WarehouseRegistrationController::class, 'getAvailableChambers']);
+        Route::get('/dashboard/warehouse-map',                 [WarehouseRegistrationController::class, 'warehouseMap']);
 
         // Helper: registrasi yg bisa dibuatkan BA
         Route::get('/freight-forwarders/{ffId}/warehouse-registrations/invoiceable-ba',
