@@ -54,7 +54,7 @@ class WarehouseBeritaAcaraController extends Controller
             ->whereMonth('ba_date', now()->month)
             ->count() + 1;
 
-        return sprintf('BA-GUDANG/SMNT/%02d.A/%s/%d', $count, $month, $year);
+        return sprintf('BA-GUDANG/SMNT/%02d/%s/%d', $count, $month, $year);
     }
 
     private function buildQuery(Request $request)
@@ -207,12 +207,7 @@ class WarehouseBeritaAcaraController extends Controller
                         'success' => false,
                     ], 400);
                 }
-                if ($reg->record_status !== 'CLOSED') {
-                    return response()->json([
-                        'message' => "Registrasi #{$reg->id} belum CLOSED.",
-                        'success' => false,
-                    ], 400);
-                }
+
                 if ($reg->invoiced) {
                     return response()->json([
                         'message' => "Registrasi #{$reg->id} sudah pernah dibuatkan Berita Acara.",
@@ -535,109 +530,241 @@ class WarehouseBeritaAcaraController extends Controller
     private function buildBaPdf(WarehouseBeritaAcara $ba): string
     {
         $ff        = $ba->freightForwarder;
+        $ffName    = strtoupper($ff->name);
+
+        Carbon::setLocale('id'); // WAJIB untuk Bahasa Indonesia
+
         $baDate    = Carbon::parse($ba->ba_date);
-        $baDateStr = $baDate->translatedFormat('l, d F Y');
+        $baDateStr = $baDate->translatedFormat('l, d F Y'); 
         $bulanStr  = strtoupper($baDate->translatedFormat('F'));
+        $tahunStr  = $baDate->format('Y');
+
+        // Header image (Logo Kiri Saja)
+        $headerPath = public_path('images/logo-smnt.png');
+        $headerB64  = base64_encode(file_get_contents($headerPath));
+        $headerImg  = 'data:image/png;base64,' . $headerB64;
 
         // Rows chamber
         $chamberRows     = '';
         $chamberSubtotal = 0;
 
         foreach ($ba->baRegistrations as $bar) {
-            $dim     = "{$bar->chamber_length_m} M × {$bar->chamber_width_m} M";
-            $start   = Carbon::parse($bar->rent_start)->format('d/m/Y');
-            $end     = Carbon::parse($bar->rent_end)->format('d/m/Y');
+            $dim     = "{$bar->chamber_length_m} M &times; {$bar->chamber_width_m} M";
+            $start   = Carbon::parse($bar->rent_start)->translatedFormat('d F Y');
+            $end     = Carbon::parse($bar->rent_end)->translatedFormat('d F Y');
             $tariff  = number_format($bar->tariff_per_m2, 0, ',', '.');
             $sub     = number_format($bar->subtotal, 0, ',', '.');
             $chamberSubtotal += (float) $bar->subtotal;
 
             $chamberRows .= "
-            <tr>
-                <td>Pembayaran atas penggunaan {$bar->chamber_name} {$dim} = {$bar->area_m2} M2
-                    di Dry Port KEK Sei Mangkei, periode {$start} – {$end}<br/>
-                    Sebesar {$bar->area_m2} M2 × Rp.{$tariff},- = <strong>Rp.{$sub},-</strong>
-                </td>
-            </tr>";
+            <li>
+                Pembayaran atas penggunaan {$bar->chamber_name} {$dim} = {$bar->area_m2} M&sup2; 
+                di Dry Port KEK Sei Mangkei, yang dilakukan pada tanggal {$start} &ndash; {$end} 
+                Sebesar {$bar->area_m2} M&sup2; X Rp. {$tariff},- = Rp. {$sub},-
+            </li>";
         }
 
-        // Rows biaya tambahan
+        // Fees
         $feeRows      = '';
         $feesSubtotal = 0;
 
         foreach ($ba->additionalFees as $fee) {
             $amount = number_format($fee->fee_amount, 0, ',', '.');
             $feesSubtotal += (float) $fee->fee_amount;
+
             $feeRows .= "
-            <tr>
-                <td>{$fee->fee_name} sebesar <strong>Rp.{$amount},-</strong></td>
-            </tr>";
+            <li>
+                {$fee->fee_name} sebesar Rp. {$amount},-
+            </li>";
         }
 
         $subtotal    = $chamberSubtotal + $feesSubtotal;
         $subtotalFmt = number_format($subtotal, 0, ',', '.');
         $tariffPerM2 = number_format($ba->baRegistrations->first()->tariff_per_m2 ?? 0, 0, ',', '.');
 
-        $approverBlock = $ba->approver_ff_name
-            ? "<br/><br/>Diketahui Oleh,<br/><br/><strong>{$ba->approver_ff_name}</strong><br/>{$ba->approver_ff_position}"
+        // Memisahkan baris approver untuk ditambahkan di tabel bawah agar sejajar
+        $approverRows = $ba->approver_ff_name
+            ? "
+            <br><br>
+            <tr>
+                <td></td>
+                <td style='padding-top: 40px; padding-bottom: 100px;'>Diketahui Oleh,</td>
+            </tr>
+            <br><br>
+            <tr>
+                <td></td>
+                <td>
+                    <strong><u>{$ba->approver_ff_name}</u></strong><br/>
+                    {$ba->approver_ff_position}
+                </td>
+            </tr>"
             : '';
 
-        return "<!DOCTYPE html><html lang='id'><head><meta charset='UTF-8'/>
-        <style>
-          body { font-family: Arial, sans-serif; font-size: 12px; margin: 0; padding: 30px; }
-          h2 { text-align: center; font-size: 14px; margin: 0; }
-          p  { margin: 4px 0; line-height: 1.6; }
-          table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-          td, th { padding: 6px 8px; vertical-align: top; }
-          .sign-table td { text-align: center; padding: 10px 20px; }
-        </style></head><body>
+        return "<!DOCTYPE html>
+    <html lang='id'>
+    <head>
+    <meta charset='UTF-8'/>
+    <style>
+    body { 
+        font-family: 'Times New Roman', Times, serif; 
+        font-size: 26px; /* Sesuai instruksi font sangat besar */
+        margin: 0; 
+        padding: 30px; 
+        color: #000;
+    }
+    h3 { 
+        text-align: center; 
+        font-size: 28px; /* Sesuai instruksi font sangat besar */
+        margin: 2px 0; 
+        font-weight: bold;
+    }
+    p, li { 
+        line-height: 1.5; 
+        text-align: justify; 
+        margin: 5px 0; 
+    }
+    .header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .header img {
+        width: 120px; 
+    }
+    
+    /* Styling List Utama (1-6) */
+    ol.main-list {
+        padding-left: 45px;
+        margin-top: 15px;
+        margin-bottom: 15px;
+    }
+    ol.main-list > li {
+        padding-left: 10px;
+        margin-bottom: 15px;
+    }
 
-        <h2>BERITA ACARA</h2>
-        <h2>PEMBAYARAN BULAN {$bulanStr}</h2>
-        <h2>ATAS PERJANJIAN KERJA SAMA</h2>
-        <h2>PENGGUNAAN GUDANG PLB DI DRYPORT</h2>
-        <h2>ANTARA PT SEI MANGKEI NUSANTARA TIGA DENGAN {$ff->name}</h2>
-        <br/>
-        <p style='text-align:center;'><strong>NOMOR : {$ba->ba_number}</strong></p>
-        <br/>
+    /* Styling Sub List (a-d) */
+    ol.sub-list {
+        padding-left: 30px;
+        margin-top: 10px;
+    }
+    ol.sub-list > li {
+        padding-left: 10px;
+        margin-bottom: 10px;
+    }
 
-        <p>Pada hari ini, {$baDateStr} telah disepakati Berita Acara Pembayaran Atas Perjanjian Kerja Sama
-        Penggunaan Gudang PLB di Dry Port KEK Sei Mangkei Antara PT Sei Mangkei Nusantara Tiga dengan {$ff->name}.</p>
+    /* Tabel Rekening Bank */
+    .bank-table {
+        width: 85%; 
+        margin-left: 55px; 
+        border-collapse: collapse; 
+        margin-top: 10px;
+        margin-bottom: 30px;
+    }
+    .bank-table td { 
+        padding: 5px 0; 
+        vertical-align: top; 
+    }
+    .col-label { width: 180px; } /* Diperlebar karena font besar */
+    .col-colon { width: 25px; text-align: center; }
 
-        <p>Atas pelaksanaan Perjanjian ini, {$ff->name} memberikan kompensasi penggunaan gudang PLB di Dry Port
-        sebesar Rp {$tariffPerM2},-/M2 (tidak termasuk PPN) kepada PT Sei Mangkei Nusantara Tiga.</p>
+    /* Tabel Tanda Tangan */
+    .sign-table {
+        width: 100%;
+        margin-top: 40px;
+        text-align: center;
+        border-collapse: collapse;
+    }
+    .sign-table td {
+        width: 50%;
+        vertical-align: top;
+    }
+    .sign-table .company-name {
+        padding-bottom: 120px; /* Ruang untuk tanda tangan pertama */
+    }
+    </style>
+    </head>
+    <body>
 
-        <p><strong>Berita Acara penggunaan gudang ini meliputi kegiatan sebagai berikut :</strong></p>
+    <div class='header'>
+        <img src='{$headerImg}' />
+    </div>
 
-        <table>{$chamberRows}{$feeRows}</table>
+    <h3>BERITA ACARA</h3>
+    <h3>PEMBAYARAN BULAN {$bulanStr}</h3>
+    <h3>ATAS PERJANJIAN KERJA SAMA</h3>
+    <h3>PENGGUNAAN GUDANG PLB DI DRYPORT</h3>
+    <h3>ANTARA</h3>
+    <h3>PT SEI MANGKEI NUSANTARA TIGA</h3>
+    <h3>DENGAN</h3>
+    <h3>{$ffName}</h3>
 
-        <p><strong>Total sebesar Rp.{$subtotalFmt},-</strong> (tidak termasuk PPN)</p>
+    <br/>
+    <p style='text-align:center;'><strong>NOMOR : {$ba->ba_number}</strong></p>
+    <br/>
 
-        <p>Pembayaran dilaksanakan oleh {$ff->name} selambat-lambatnya 30 (tiga puluh) hari kerja
-        terhitung sejak Invoice diterima, ke rekening berikut:</p>
+    <p>Pada hari ini, {$baDateStr} telah disepakati Berita Acara Pembayaran Atas Perjanjian Kerja Sama Penggunaan gudang PLB di Dry Port KEK Sei Mangkei Antara PT Sei Mangkei Nusantara Tiga dengan {$ffName} yang menerangkan sebagai berikut:</p>
 
-        <table style='width:50%'>
-            <tr><td>Nama</td><td>: PT Sei Mangkei Nusantara Tiga</td></tr>
-            <tr><td>Bank</td><td>: {$ba->bank_name}</td></tr>
-            <tr><td>No. Rekening</td><td>: {$ba->bank_account_number}</td></tr>
-            <tr><td>A/N</td><td>: {$ba->bank_account_name}</td></tr>
-        </table>
+    <ol class='main-list'>
+        <li>Perjanjian Kerja Sama ini adalah sebagai pedoman dalam penggunaan gudang PLB di Dryport KEK Sei Mangkei.</li>
+        <li>Perjanjian Kerja Sama ini adalah untuk menciptakan sinergi usaha dengan prinsip yang saling menguntungkan dengan memanfaatkan potensi yang dimiliki masing-masing Pihak serta mendukung keberadaan Kawasan Industri di Kawasan Ekonomi Khusus (KEK) Sei Mangkei.</li>
+        <li>Atas pelaksanaan Perjanjian ini, {$ffName} memberikan kompensasi penggunaan gudang PLB di Dry port sebesar Rp {$tariffPerM2},-/M&sup2; (tidak termasuk PPN) kepada PT Sei Mangkei Nusantara Tiga.</li>
+        <li>Berita acara penggunaan gudang ini meliputi berbagai jenis kegiatan yaitu sebagai berikut:
+            <ol class='sub-list' style='list-style-type: lower-alpha;'>
+                {$chamberRows}
+                {$feeRows}
+                <li>Total sebesar Rp. {$subtotalFmt},- (tidak termasuk PPN)</li>
+            </ol>
+        </li>
+        <li>Perhitungan Pembayaran Berita acara penggunaan gudang Bulan {$bulanStr} {$tahunStr}.</li>
+        <li>Pembayaran dilaksanakan oleh {$ffName} selambat-lambatnya 30 (tiga puluh) hari kerja terhitung sejak Invoice diterima, dan akan ditransfer ke rekening sebagai berikut:</li>
+    </ol>
 
-        <p>Demikian Berita Acara ini dibuat dan ditandatangani dalam rangkap 2 (dua).</p>
-        <br/><br/>
+    <table class='bank-table'>
+        <tr>
+            <td class='col-label'>Nama</td>
+            <td class='col-colon'>:</td>
+            <td>PT Sei Mangkei Nusantara Tiga</td>
+        </tr>
+        <tr>
+            <td class='col-label'>Bank</td>
+            <td class='col-colon'>:</td>
+            <td>{$ba->bank_name}</td>
+        </tr>
+        <tr>
+            <td class='col-label'>No. Rekening</td>
+            <td class='col-colon'>:</td>
+            <td>{$ba->bank_account_number}</td>
+        </tr>
+    </table>
 
-        <table class='sign-table'>
-            <tr>
-                <td style='width:50%'>PT SEI MANGKEI NUSANTARA TIGA</td>
-                <td style='width:50%'>{$ff->name}</td>
-            </tr>
-            <tr style='height:60px'><td></td><td></td></tr>
-            <tr>
-                <td><strong>{$ba->signer_smnt_name}</strong><br/>{$ba->signer_smnt_position}</td>
-                <td><strong>{$ba->signer_ff_name}</strong><br/>{$ba->signer_ff_position}{$approverBlock}</td>
-            </tr>
-        </table>
+    <p>Demikian Berita Acara Rekonsiliasi ini dibuat dan ditandatangani dalam rangkap 2 (dua).</p>
 
-        </body></html>";
+    <table class='sign-table'>
+        <tr>
+            <td class='company-name'><strong>PT SEI MANGKEI NUSANTARA TIGA</strong></td>
+            <td class='company-name'><strong>{$ffName}</strong></td>
+        </tr>
+        <br>
+        <br>
+        <br>
+        <br>
+        <br>
+        <tr>
+            <td>
+                <strong><u>{$ba->signer_smnt_name}</u></strong><br/>
+                {$ba->signer_smnt_position}
+            </td>
+            <td>
+                <strong><u>{$ba->signer_ff_name}</u></strong><br/>
+                {$ba->signer_ff_position}
+            </td>
+        </tr>
+        {$approverRows}
+    </table>
+
+    </body>
+    </html>";
     }
 
     // ─── Error Helpers ────────────────────────────────────────────────────────

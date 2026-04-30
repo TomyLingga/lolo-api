@@ -66,24 +66,32 @@ class WarehouseInvoiceController extends Controller
     private function calculateTotals(float $subtotal, array $taxIds): array
     {
         $taxes       = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
-        $totalAdd    = 0;
-        $totalDeduct = 0;
+        $totalAdd    = 0.0;
+        $totalDeduct = 0.0;
         $taxDetails  = [];
 
         foreach ($taxes as $tax) {
-            $amount = round($subtotal * ((float) $tax->percentage / 100), 2);
+            $value     = (float) $tax->value;
+            $valueType = strtoupper(trim($tax->value_type));
+            $type      = strtoupper(trim($tax->type));
 
-            if (strtoupper($tax->type) === 'ADD') {
+            // Jika PERCENTAGE → hitung dari subtotal, jika NOMINAL → pakai langsung
+            $amount = $valueType === 'NOMINAL'
+                ? round($value, 2)
+                : round($subtotal * ($value / 100), 2);
+
+            if ($type === 'ADD') {
                 $totalAdd += $amount;
-            } else {
+            } elseif ($type === 'DEDUCT') {
                 $totalDeduct += $amount;
             }
 
             $taxDetails[] = [
                 'id'                => $tax->id,
                 'name'              => $tax->name,
-                'type'              => strtoupper($tax->type),
-                'percentage'        => (float) $tax->percentage,
+                'type'              => $type,
+                'value_type'        => $valueType,
+                'percentage'        => $value,
                 'calculated_amount' => $amount,
             ];
         }
@@ -195,7 +203,7 @@ class WarehouseInvoiceController extends Controller
     public function store(Request $request)
     {
         DB::beginTransaction();
-
+    
         try {
             $validator = Validator::make($request->all(), [
                 'freight_forwarder_id' => 'required|exists:freight_forwarders,id',
@@ -216,26 +224,26 @@ class WarehouseInvoiceController extends Controller
                 'tax_ids'              => 'nullable|array',
                 'tax_ids.*'            => 'integer|exists:taxes,id',
             ]);
-
+    
             if ($validator->fails()) {
                 return response()->json([
                     'message' => $validator->errors()->first(),
                     'success' => false,
                 ], 400);
             }
-
-            // Validasi semua BA
+    
+            // Load BA beserta relasinya agar calculateSubtotal() bisa jalan
             $bas = WarehouseBeritaAcara::with(['baRegistrations', 'additionalFees'])
                 ->whereIn('id', $request->ba_ids)
                 ->get();
-
+    
             if ($bas->count() !== count($request->ba_ids)) {
                 return response()->json([
                     'message' => 'Satu atau lebih Berita Acara tidak ditemukan.',
                     'success' => false,
                 ], 404);
             }
-
+    
             foreach ($bas as $ba) {
                 if ($ba->freight_forwarder_id != $request->freight_forwarder_id) {
                     return response()->json([
@@ -243,18 +251,21 @@ class WarehouseInvoiceController extends Controller
                         'success' => false,
                     ], 400);
                 }
+    
                 if ($ba->invoiced) {
                     return response()->json([
                         'message' => "BA #{$ba->ba_number} sudah pernah diinvoice.",
                         'success' => false,
                     ], 400);
                 }
+    
                 if ($ba->warehouse_id != $request->warehouse_id) {
                     return response()->json([
                         'message' => "BA #{$ba->ba_number} bukan dari warehouse yang dipilih.",
                         'success' => false,
                     ], 400);
                 }
+    
                 if (! $ba->is_active) {
                     return response()->json([
                         'message' => "BA #{$ba->ba_number} tidak aktif.",
@@ -262,14 +273,14 @@ class WarehouseInvoiceController extends Controller
                     ], 400);
                 }
             }
-
-            // Hitung subtotal dari semua BA
-            $subtotal = $bas->sum(fn ($ba) => $ba->calculateSubtotal());
-
+    
+            // Hitung subtotal dari semua BA — cast eksplisit ke float
+            $subtotal = (float) $bas->sum(fn ($ba) => (float) $ba->calculateSubtotal());
+    
             // Hitung pajak
             $taxIds = $request->input('tax_ids', []);
             $totals = $this->calculateTotals($subtotal, $taxIds);
-
+    
             // Buat invoice
             $invoice = WarehouseInvoice::create([
                 'freight_forwarder_id' => $request->freight_forwarder_id,
@@ -293,33 +304,33 @@ class WarehouseInvoiceController extends Controller
                 'is_active'            => true,
                 'generated_by'         => $request->user()->id,
             ]);
-
-            // Pivot invoice ↔ BA + tandai BA
+    
+            // Pivot invoice ↔ BA + tandai BA sebagai sudah diinvoice
             foreach ($bas as $ba) {
                 WarehouseInvoiceBa::create([
                     'warehouse_invoice_id' => $invoice->id,
                     'ba_id'                => $ba->id,
-                    'ba_subtotal'          => $ba->calculateSubtotal(),
+                    'ba_subtotal'          => (float) $ba->calculateSubtotal(),
                 ]);
-
+    
                 $ba->update(['invoiced' => true]);
             }
-
+    
             // Simpan snapshot pajak
             foreach ($totals['tax_details'] as $t) {
                 WarehouseInvoiceTax::create([
                     'warehouse_invoice_id' => $invoice->id,
                     'tax_id'               => $t['id'],
                     'tax_name'             => $t['name'],
-                    'tax_value'            => $t['percentage'],
+                    'tax_value'            => (float) $t['percentage'],
                     'tax_value_type'       => 'PERCENTAGE',
                     'tax_type'             => $t['type'],
-                    'calculated_amount'    => $t['calculated_amount'],
+                    'calculated_amount'    => (float) $t['calculated_amount'],
                 ]);
             }
-
+    
             DB::commit();
-
+    
             return response()->json([
                 'data'    => $invoice->load($this->getWith()),
                 'message' => $this->messageCreate,
@@ -478,19 +489,13 @@ class WarehouseInvoiceController extends Controller
     public function exportPdf($id)
     {
         try {
-            $invoice = WarehouseInvoice::with([
-                'freightForwarder',
-                'warehouse',
-                'taxes',
-                'invoiceBas.beritaAcara.baRegistrations',
-                'invoiceBas.beritaAcara.additionalFees',
-            ])->find($id);
+            $invoice = WarehouseInvoice::with($this->getWith())->find($id);
 
             if (! $invoice) {
                 return response()->json(['message' => $this->messageMissing], 404);
             }
 
-            $headerPath = public_path('images/header-invoice.png');
+            $headerPath = public_path('images/logo-smnt.png');
             $headerImg  = file_exists($headerPath)
                 ? 'data:image/png;base64,' . base64_encode(file_get_contents($headerPath))
                 : '';
@@ -512,147 +517,211 @@ class WarehouseInvoiceController extends Controller
     private function buildInvoicePdf(WarehouseInvoice $invoice, string $headerImg): string
     {
         $ff          = $invoice->freightForwarder;
-        $invoiceDate = Carbon::parse($invoice->invoice_date)->format('d/m/Y');
+        
+        Carbon::setLocale('id'); // Bahasa Indonesia
+        
+        $invoiceDate     = Carbon::parse($invoice->invoice_date)->translatedFormat('d F Y');
+        $invoiceDateTop  = "Sei Mangkei, {$invoiceDate}";
+        
         $dueDate     = $invoice->due_date
             ? Carbon::parse($invoice->due_date)->translatedFormat('d F Y')
             : '-';
+            
         $spkDate = $invoice->spk_date
             ? Carbon::parse($invoice->spk_date)->translatedFormat('d F Y')
             : '-';
 
-        // Rows detail
-        $rowsHtml = '';
-        $i        = 0;
+        // Menentukan Periode (Min Start - Max End) dari seluruh BA
+        $minDate = null;
+        $maxDate = null;
+        foreach ($invoice->invoiceBas as $ib) {
+            foreach ($ib->beritaAcara->baRegistrations as $bar) {
+                $start = Carbon::parse($bar->rent_start);
+                $end   = Carbon::parse($bar->rent_end);
+                if (!$minDate || $start < $minDate) $minDate = $start;
+                if (!$maxDate || $end > $maxDate) $maxDate = $end;
+            }
+        }
+        
+        $periodeStr = '';
+        if ($minDate && $maxDate) {
+            $startStr = $minDate->translatedFormat('d F');
+            $endStr   = $maxDate->translatedFormat('d F Y');
+            $periodeStr = "Periode : {$startStr} s/d {$endStr}";
+        }
 
+        // Inner Rows detail (Digabung dalam kolom No. 2)
+        $itemsHtml = '<table width="100%" cellpadding="3" cellspacing="0" border="0" style="margin-top: 10px; font-size: 23px;">';
+        
         foreach ($invoice->invoiceBas as $ib) {
             $ba = $ib->beritaAcara;
 
             foreach ($ba->baRegistrations as $bar) {
-                $bg     = ($i % 2 === 0) ? '#ffffff' : '#f2f2f2';
-                $start  = Carbon::parse($bar->rent_start)->format('d/m/Y');
-                $end    = Carbon::parse($bar->rent_end)->format('d/m/Y');
-                $tariff = number_format($bar->tariff_per_m2, 0, ',', '.');
-                $sub    = number_format($bar->subtotal, 0, ',', '.');
+                $start = Carbon::parse($bar->rent_start);
+                $end   = Carbon::parse($bar->rent_end);
+                $days  = $start->diffInDays($end) + 1;
+                
+                $tariffFmt = number_format((float) $bar->tariff_per_m2, 0, ',', '.');
+                $sub       = number_format((float) $bar->subtotal, 0, ',', '.');
 
-                $rowsHtml .= "<tr style='background:{$bg}'>
-                    <td colspan='4' style='border:0.5px solid #bbb;padding:5px 8px;'>
-                        Gudang {$bar->chamber_name} {$bar->area_m2} M2 × Rp.{$tariff},-
-                        <br/><small style='color:#666;'>Periode: {$start} s/d {$end}</small>
-                    </td>
-                    <td style='text-align:right;border:0.5px solid #bbb;padding:5px 8px;'>= Rp.{$sub}</td>
+                $itemsHtml .= "<tr>
+                    <td style='width: 60%; padding-left: 15px;'>- {$bar->chamber_name} ({$bar->area_m2} m2 x Rp. {$tariffFmt} / hari x {$days} hari)</td>
+                    <td style='width: 5%; text-align: center;'>=</td>
+                    <td style='width: 5%;'>Rp.</td>
+                    <td style='width: 30%; text-align: right;'>{$sub}</td>
                 </tr>";
-                $i++;
             }
 
             foreach ($ba->additionalFees as $fee) {
-                $bg     = ($i % 2 === 0) ? '#ffffff' : '#f2f2f2';
-                $amount = number_format($fee->fee_amount, 0, ',', '.');
-                $rowsHtml .= "<tr style='background:{$bg}'>
-                    <td colspan='4' style='border:0.5px solid #bbb;padding:5px 8px;'>{$fee->fee_name}</td>
-                    <td style='text-align:right;border:0.5px solid #bbb;padding:5px 8px;'>= Rp.{$amount}</td>
+                $amount = number_format((float) $fee->fee_amount, 0, ',', '.');
+                $itemsHtml .= "<tr>
+                    <td style='padding-left: 15px;'>- {$fee->fee_name}</td>
+                    <td style='text-align: center;'>=</td>
+                    <td>Rp.</td>
+                    <td style='text-align: right;'>{$amount}</td>
                 </tr>";
-                $i++;
             }
         }
 
-        // Rows pajak
-        $taxHtml = '';
+        // Rows pajak (Misal: PPN 11%)
         foreach ($invoice->taxes as $t) {
             $sign       = strtoupper($t->tax_type) === 'ADD' ? '' : '-';
-            $valueLabel = "{$t->tax_name} ({$t->tax_value}%)";
-            $amount     = $sign . 'Rp.' . number_format($t->calculated_amount, 0, ',', '.');
-            $taxHtml   .= "<tr>
-                <td colspan='4' style='text-align:right;padding:4px 8px;'>{$valueLabel}</td>
-                <td style='text-align:right;padding:4px 8px;'>{$amount}</td>
+            $amount     = $sign . number_format((float) $t->calculated_amount, 0, ',', '.');
+            $itemsHtml .= "<tr>
+                <td style='text-align: left; padding-left: 15px;'>- {$t->tax_name} {$t->tax_value}%</td>
+                <td style='text-align: center;'>=</td>
+                <td>Rp.</td>
+                <td style='text-align: right;'>{$amount}</td>
             </tr>";
         }
 
-        $subtotalFmt   = 'Rp.' . number_format($invoice->subtotal, 0, ',', '.');
-        $grandTotalFmt = 'Rp.' . number_format($invoice->grand_total, 0, ',', '.');
-        $poLine        = $invoice->po_number ? " ({$invoice->po_number})" : '';
-        $headerHtml    = $headerImg
-            ? "<img src='{$headerImg}' style='width:100%;display:block;' alt='Header'/>"
+        $grandTotalFmt = number_format((float) $invoice->grand_total, 0, ',', '.');
+        $itemsHtml .= "<tr>
+            <td style='text-align: right; font-weight: bold; padding-top: 5px;'>Total Tagihan</td>
+            <td style='text-align: center; font-weight: bold; padding-top: 5px;'>=</td>
+            <td style='font-weight: bold; padding-top: 5px;'>Rp.</td>
+            <td style='text-align: right; font-weight: bold; padding-top: 5px;'>{$grandTotalFmt}</td>
+        </tr>";
+        
+        $itemsHtml .= "</table>";
+
+        $poLine = $invoice->po_number ? "({$invoice->po_number})" : '';
+
+        // Jika Anda memiliki helper terbilang di aplikasi, ganti bagian ini:
+        // $terbilang = terbilang($invoice->grand_total);
+        $terbilang = ucwords(terbilang((int) $invoice->grand_total)); 
+
+        $headerHtml = $headerImg
+            ? "<img src='{$headerImg}' style='height:70px; display:inline-block;' alt='Header'/>"
             : '';
 
         return "<!DOCTYPE html><html lang='id'><head><meta charset='UTF-8'/>
         <style>
-          * { margin:0; padding:0; box-sizing:border-box; }
-          body { font-family:Arial,sans-serif; font-size:11px; color:#000; padding:22px 30px; }
-          table { width:100%; border-collapse:collapse; }
-          th { background:#2c5f9e; color:#fff; text-align:center; padding:8px 6px; font-size:13px; }
-          td { font-size:12px; vertical-align:middle; padding:5px; }
-          .total-row td { font-weight:bold; font-size:14px; border-top:2px solid #000; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; font-size: 23px; color: #000; padding: 30px 40px; }
+          .header-right { text-align: right; margin-bottom: 25px; }
+          .title-area { text-align: center; margin-bottom: 20px; line-height: 1.5; }
+          .title-area h2 { margin: 0; font-size: 26px; text-decoration: underline; font-weight: bold; }
+          
+          table.main-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+          table.main-table th, table.main-table td { border: 1px solid #000; padding: 6px 10px; vertical-align: top; }
+          table.main-table th { font-weight: bold; text-align: center; background-color: transparent; color: #000; font-size: 24px;}
+          
+          .info-bank { margin-top: 15px; line-height: 1.6; }
+          .bank-details { margin-left: 30px; margin-top: 5px; width: 80%; }
+          .bank-details td { padding: 2px 5px; vertical-align: top; }
+          
+          .footer-section { width: 100%; margin-top: 40px; border: none; }
+          .footer-section td { border: none; padding: 0; }
         </style></head><body>
 
-        <table style='margin-bottom:20px;border:none;'>
-          <tr><td style='border:none;text-align:center;padding:0;'>{$headerHtml}</td></tr>
+        <div class='header-right'>
+            {$headerHtml}<br/><br/>
+            {$invoiceDateTop}
+        </div>
+
+        <div class='title-area'>
+            <h2>INVOICE</h2>
+            No. {$invoice->invoice_number}<br/><br/>
+            Kepada Yth :<br/>
+            {$ff->name}<br/>
+            Kawasan Ekonomi Khusus Sei Mangkei<br/>
+            <i>Kab Simalungun, Prov Sumatera Utara Sei Mangkei</i><br/><br/>
+            <i>Debit</i> to PT. Sei Mangkei Nusantara Tiga<br/>
+            <i>As Per Spesification Below</i>
+        </div>
+
+        <table class='main-table'>
+            <tr>
+                <th style='width: 5%;'>No</th>
+                <th style='width: 95%;'>Uraian</th>
+            </tr>
+            <tr>
+                <td style='text-align: center;'>1.</td>
+                <td style='text-align: justify;'>
+                    Berdasarkan Surat Perjanjian Kerja Sama {$invoice->spk_name} antara PT Sei Mangkei Nusantara Tiga dengan {$ff->name} NOMOR : {$invoice->spk_number} tanggal {$spkDate}.
+                </td>
+            </tr>
+            <tr>
+                <td style='text-align: center;'>2.</td>
+                <td style='text-align: justify;'>
+                    Kegiatan penggunaan Gudang PLB di Dry Port KEK Sei Mangkei {$periodeStr} {$poLine} antara lain sebagai berikut :
+                    
+                    {$itemsHtml}
+
+                    <div style='margin-top: 15px; font-weight: bold;'>
+                        &gt; Terbilang (<i>{$terbilang} Rupiah</i>)
+                    </div>
+                </td>
+            </tr>
         </table>
 
-        <table style='margin-bottom:18px;'>
-          <tr>
-            <td style='border:none;font-size:12px;'>
-              No : {$invoice->invoice_number}<br/>Tanggal : {$invoiceDate}
-            </td>
-            <td style='border:none;text-align:right;font-size:12px;'>
-              Kepada Yth :<br/><strong>{$ff->name}</strong><br/>KEK Sei Mangkei
-            </td>
-          </tr>
-        </table>
+        <div class='info-bank'>
+            Jumlah tersebut diatas dapat dipindahbukukan ke rekening <strong>{$invoice->bank_name}</strong> atas nama <strong>PT. Sei Mangkei Nusantara Tiga</strong>, pada :
+            
+            <table class='bank-details' style='border: none;'>
+                <tr>
+                    <td style='width: 20px; font-weight: bold;'>&gt;</td>
+                    <td colspan='3' style='font-weight: bold;'>{$invoice->bank_name} :</td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td style='width: 60px;'>A/N</td>
+                    <td style='width: 10px;'>:</td>
+                    <td>{$invoice->bank_account_number}</td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td>Branch</td>
+                    <td>:</td>
+                    <td>Kuala Tanjung</td>
+                </tr>
+            </table>
+        </div>
 
-        <p style='margin-bottom:4px;font-size:11px;'>Debit to PT. Sei Mangkei Nusantara Tiga</p>
-        <p style='margin-bottom:12px;font-size:10px;color:#555;'>
-          (Jatuh Tempo Pembayaran Maksimal Tanggal {$dueDate})
+        <p style='margin-top: 20px; font-weight: bold; font-style: italic;'>
+            (Jatuh Tempo Pembayaran Maksimal Tanggal {$dueDate})
         </p>
 
-        <table style='margin-bottom:12px;'>
-          <tr>
-            <td style='border:0.5px solid #bbb;padding:5px 8px;width:30px;'>1.</td>
-            <td colspan='4' style='border:0.5px solid #bbb;padding:5px 8px;'>
-              Berdasarkan Surat Perjanjian {$invoice->spk_name} antara PT Sei Mangkei Nusantara Tiga
-              dengan {$ff->name} NOMOR : {$invoice->spk_number} tanggal {$spkDate}.
-            </td>
-          </tr>
-          <tr>
-            <td style='border:0.5px solid #bbb;padding:5px 8px;'>2.</td>
-            <td colspan='4' style='border:0.5px solid #bbb;padding:5px 8px;'>
-              Kegiatan penggunaan Gudang PLB di Dry Port KEK Sei Mangkei{$poLine}:
-            </td>
-          </tr>
-          {$rowsHtml}
-          <tr>
-            <td colspan='4' style='text-align:right;padding:4px 8px;font-style:italic;'>SUB TOTAL</td>
-            <td style='text-align:right;padding:4px 8px;'>{$subtotalFmt}</td>
-          </tr>
-          {$taxHtml}
-          <tr class='total-row'>
-            <td colspan='4' style='text-align:right;padding:6px 8px;'>Total Tagihan</td>
-            <td style='text-align:right;padding:6px 8px;'>{$grandTotalFmt}</td>
-          </tr>
-        </table>
-
-        <table style='margin-top:40px;border:none;'>
-          <tr>
-            <td style='width:60%;vertical-align:top;border:none;font-size:12px;'>
-              <strong>Metode Pembayaran</strong><br/>
-              {$invoice->bank_name}<br/>
-              SWIFT/BIC: {$invoice->swift_code}<br/>
-              No. Rekening: {$invoice->bank_account_number}<br/>
-              A/N: {$invoice->bank_account_name}<br/><br/>
-              <strong>PT SEI MANGKEI NUSANTARA TIGA</strong><br/>
-              Jl Kelapa Sawit I No. 1 KEK Sei Mangkei, Kec. Bosar Maligas<br/>
-              Kab. Simalungun Sumatera Utara, Indonesia 21183<br/>
-              Telp: +62 622 7296406
-            </td>
-            <td style='width:40%;text-align:center;vertical-align:bottom;border:none;'>
-              <div style='margin-top:65px;'>
-                <div style='padding-top:7px;font-weight:bold;border-top:2px solid #000;
-                            font-size:14px;text-decoration:underline;display:inline-block;padding:0 20px;'>
-                  {$invoice->signatory_name}
-                </div>
-                <div style='font-size:13px;margin-top:4px;'>{$invoice->signatory_position}</div>
-              </div>
-            </td>
-          </tr>
+        <table class='footer-section'>
+            <tr>
+                <td style='width: 60%; vertical-align: bottom; font-size: 21px; line-height: 1.4;'>
+                    <strong>Head Office</strong><br/>
+                    Gedung Sei Mangkei Dry Port<br/>
+                    Kawasan Ekonomi Khusus (KEK) Sei Mangkei<br/>
+                    Jl. Kelapa Sawit 1 Sei Mangkei Bosar Maligas Simalungun &ndash; Sumatera Utara<br/>
+                    &#128222; +62622 7296406<br/>
+                    <span style='color: blue; text-decoration: underline;'>Info@seimangkeidryport.com</span><br/>
+                    <span style='color: blue; text-decoration: underline;'>www.seimangkeidryport.com</span>
+                </td>
+                <td style='width: 40%; text-align: center; vertical-align: bottom; font-size: 23px;'>
+                    PT. Sei Mangkei Nusantara Tiga<br/>
+                    Dry Port Sei Mangkei<br/>
+                    <br/><br/><br/><br/><br/>
+                    <span style='text-decoration: underline;'>{$invoice->signatory_name}</span><br/>
+                    {$invoice->signatory_position}
+                </td>
+            </tr>
         </table>
 
         </body></html>";
