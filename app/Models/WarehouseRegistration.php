@@ -62,21 +62,28 @@ class WarehouseRegistration extends Model
     }
 
     /**
-     * Total biaya sewa = subtotal × jumlah bulan
+     * Total biaya sewa = subtotal * jumlah bulan
      * Dihitung dari total hari / 30 (dibulatkan ke atas per bulan)
      * Minimal 1 bulan
      */
     public function getTotalRentCostAttribute(): float
     {
-        $days = $this->total_rent_days;
-
-        if (! $days) {
+        if (! $this->rent_start || ! $this->rent_end) {
             return 0.0;
         }
 
-        // Minimal 1 bulan, dibulatkan ke atas
-        $months = (int) ceil($days / 30);
-        $months = max(1, $months);
+        $start = Carbon::parse($this->rent_start)->startOfDay();
+        $end   = Carbon::parse($this->rent_end)->startOfDay();
+        $days  = $start->diffInDays($end) + 1;
+
+        // Toleransi hingga 31 hari = 1 bulan (untuk bulan Mei, Juli, dll)
+        if ($days <= 31) {
+            $months = 1.0;
+        } else {
+            // Gunakan pembulatan yang lebih halus atau tetap ceil jika memang kebijakan bisnis
+            // Tapi kita beri sedikit toleransi agar tidak mudah melompat ke bulan berikutnya
+            $months = ceil(($days - 1) / 30); 
+        }
 
         return round($this->subtotal * $months, 2);
     }
@@ -155,7 +162,14 @@ class WarehouseRegistration extends Model
      */
     public static function calculateMonths(string $rentStart, string $rentEnd): int
     {
-        $days = Carbon::parse($rentStart)->diffInDays(Carbon::parse($rentEnd)) + 1;
-        return max(1, (int) ceil($days / 30));
+        $start = Carbon::parse($rentStart)->startOfDay();
+        $end = Carbon::parse($rentEnd)->startOfDay();
+        $days = $start->diffInDays($end) + 1;
+        
+        if ($days <= 31) {
+            return 1;
+        }
+        
+        return (int) ceil($days / 30);
     }
 }

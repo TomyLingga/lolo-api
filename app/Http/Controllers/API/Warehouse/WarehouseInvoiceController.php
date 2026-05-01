@@ -53,7 +53,6 @@ class WarehouseInvoiceController extends Controller
         $year  = now()->year;
 
         $count = WarehouseInvoice::whereYear('invoice_date', $year)
-            ->whereMonth('invoice_date', now()->month)
             ->count() + 1;
 
         return sprintf('SMNT/inv/%03d/%s/%d', $count, $month, $year);
@@ -139,9 +138,7 @@ class WarehouseInvoiceController extends Controller
         try {
             $data = $this->buildQuery($request)->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -710,7 +707,7 @@ class WarehouseInvoiceController extends Controller
                     Gedung Sei Mangkei Dry Port<br/>
                     Kawasan Ekonomi Khusus (KEK) Sei Mangkei<br/>
                     Jl. Kelapa Sawit 1 Sei Mangkei Bosar Maligas Simalungun &ndash; Sumatera Utara<br/>
-                    &#128222; +62622 7296406<br/>
+                     +62622 7296406<br/>
                     <span style='color: blue; text-decoration: underline;'>Info@seimangkeidryport.com</span><br/>
                     <span style='color: blue; text-decoration: underline;'>www.seimangkeidryport.com</span>
                 </td>

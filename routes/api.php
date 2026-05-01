@@ -133,6 +133,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('/master/blocks',                   [BlockController::class,             'index']);
         Route::get('/master/blocks/{id}',              [BlockController::class,             'show']);
+        Route::get('/master/blocks/{blockId}/occupied-slots', [RegistrationController::class, 'getOccupiedSlots']);
 
         Route::get('/master/container-sizes',          [ContainerSizeController::class,     'index']);
         Route::get('/master/container-sizes/{id}',     [ContainerSizeController::class,     'show']);

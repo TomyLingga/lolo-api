@@ -92,9 +92,7 @@ class WarehouseRegistrationController extends Controller
         try {
             $data = $this->buildQuery($request)->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -109,9 +107,7 @@ class WarehouseRegistrationController extends Controller
         try {
             $data = $this->buildQuery($request)->active()->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -136,9 +132,7 @@ class WarehouseRegistrationController extends Controller
 
             $data = $query->orderBy('rent_end', 'desc')->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -153,9 +147,7 @@ class WarehouseRegistrationController extends Controller
         try {
             $data = $this->buildQuery($request)->notInvoiced()->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -554,8 +546,8 @@ class WarehouseRegistrationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'warehouse_id' => 'required|exists:warehouses,id',
-                'rent_start'   => 'required|date',
-                'rent_end'     => 'required|date|after_or_equal:rent_start',
+                'rent_start'   => 'nullable|date',
+                'rent_end'     => 'nullable|date|after_or_equal:rent_start',
             ]);
 
             if ($validator->fails()) {
@@ -566,18 +558,21 @@ class WarehouseRegistrationController extends Controller
             }
 
             // Chamber yang sudah terpakai pada periode ini
-            $occupiedIds = WarehouseRegistration::where('is_active', true)
-                ->where('record_status', 'ACTIVE')
-                ->where('rent_start', '<=', $request->rent_end)
-                ->where('rent_end', '>=', $request->rent_start)
-                ->pluck('chamber_id');
+            $occupiedIds = collect();
+            if ($request->filled('rent_start') && $request->filled('rent_end')) {
+                $occupiedIds = WarehouseRegistration::where('is_active', true)
+                    ->where('record_status', 'ACTIVE')
+                    ->where('rent_start', '<=', $request->rent_end)
+                    ->where('rent_end', '>=', $request->rent_start)
+                    ->pluck('chamber_id');
+            }
 
             $chambers = WarehouseChamber::where('warehouse_id', $request->warehouse_id)
                 ->where('is_active', true)
                 ->get()
                 ->map(fn ($chamber) => array_merge(
                     $chamber->toArray(),
-                    ['is_available' => ! $occupiedIds->contains($chamber->id)]
+                    ['is_available' => $occupiedIds->isEmpty() ? true : ! $occupiedIds->contains($chamber->id)]
                 ));
 
             return response()->json(['data' => $chambers, 'message' => $this->messageAll], 200);

@@ -25,6 +25,23 @@ class RegistrationController extends Controller
     private string $messageCreate  = 'Berhasil membuat data';
     private string $messageUpdate  = 'Berhasil memperbarui data';
 
+    public function getOccupiedSlots(int $blockId)
+    {
+        $occupied = StorageRecord::where('block_id', $blockId)
+            ->whereNull('end_date')
+            ->whereHas('registration', function ($q) {
+                $q->where('record_status', 'OPEN')
+                  ->where('is_active', true);
+            })
+            ->select('pos_length', 'pos_width', 'pos_height')
+            ->get();
+
+        return response()->json([
+            'data' => $occupied,
+            'message' => 'Berhasil mengambil slot terisi'
+        ]);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /**
@@ -39,6 +56,7 @@ class RegistrationController extends Controller
             'size:id,code,description',
             'type:id,code,description',
             'package:id,name,code,free_time_days',
+            'shipperTenant:id,name',
             'storageRecords.yard:id,name,code',
             'storageRecords.block:id,block_code',
             'storageRecords.cargoStatus:id,code,description',
@@ -61,6 +79,7 @@ class RegistrationController extends Controller
             'size:id,code,description',
             'type:id,code,description',
             'package:id,name,code,free_time_days',
+            'shipperTenant:id,name',
             'registrationRemarks.createdBy:id,name',
             'loloRecords.cargoStatus:id,code,description',
             'loloRecords.createdBy:id,name',
@@ -262,7 +281,7 @@ class RegistrationController extends Controller
                 'cargo_status_id'      => 'required|exists:cargo_statuses,id',
                 'package_id'           => 'required|exists:packages,id',
                 'no_do_jo'             => 'nullable|string|max:100',
-                'shipper_tenant'       => 'nullable|string|max:255',
+                'shipper_tenant_id'    => 'nullable|exists:freight_forwarders,id',
                 'remark'               => 'nullable|string',
                 'vehicle_type'         => 'nullable|string|max:50',
                 'vehicle_number'       => 'nullable|string|max:20',
@@ -366,7 +385,7 @@ class RegistrationController extends Controller
                 'container_type_id'    => $request->container_type_id,
                 'package_id'           => $request->package_id,
                 'no_do_jo'             => $request->no_do_jo,
-                'shipper_tenant'       => $request->shipper_tenant,
+                'shipper_tenant_id'    => $request->shipper_tenant_id,
                 'record_status'        => 'OPEN',
                 'invoiced'             => false,
                 'is_active'            => true,
@@ -453,7 +472,7 @@ class RegistrationController extends Controller
             $validator = Validator::make($request->all(), [
                 'freight_forwarder_id' => 'sometimes|required|exists:freight_forwarders,id',
                 'no_do_jo'             => 'nullable|string|max:100',
-                'shipper_tenant'       => 'nullable|string|max:255',
+                'shipper_tenant_id'    => 'nullable|exists:freight_forwarders,id',
                 'container_size_id'    => 'sometimes|required|exists:container_sizes,id',
                 'container_type_id'    => 'sometimes|required|exists:container_types,id',
                 'package_id'           => 'sometimes|required|exists:packages,id',
@@ -465,11 +484,11 @@ class RegistrationController extends Controller
 
             $data->update([
                 'freight_forwarder_id' => $request->freight_forwarder_id ?? $data->freight_forwarder_id,
-                'no_do_jo'             => $request->has('no_do_jo')       ? $request->no_do_jo       : $data->no_do_jo,
-                'shipper_tenant'       => $request->has('shipper_tenant') ? $request->shipper_tenant : $data->shipper_tenant,
-                'container_size_id'    => $request->container_size_id     ?? $data->container_size_id,
-                'container_type_id'    => $request->container_type_id     ?? $data->container_type_id,
-                'package_id'           => $request->package_id           ?? $data->package_id,
+                'no_do_jo'             => $request->has('no_do_jo')          ? $request->no_do_jo          : $data->no_do_jo,
+                'shipper_tenant_id'    => $request->has('shipper_tenant_id') ? $request->shipper_tenant_id : $data->shipper_tenant_id,
+                'container_size_id'    => $request->container_size_id        ?? $data->container_size_id,
+                'container_type_id'    => $request->container_type_id        ?? $data->container_type_id,
+                'package_id'           => $request->package_id              ?? $data->package_id,
             ]);
 
             DB::commit();
@@ -616,6 +635,10 @@ class RegistrationController extends Controller
     public function yardMap(Request $request)
     {
         try {
+            $now = now();
+            $startOfMonth = $now->copy()->startOfMonth();
+            $endOfMonth = $now->copy()->endOfMonth();
+
             $containerNumber = $request->filled('container_number')
                 ? strtoupper(trim($request->container_number))
                 : null;
@@ -630,7 +653,7 @@ class RegistrationController extends Controller
                     $q->where('record_status', 'OPEN')->where('is_active', true)
                 )
                 ->with([
-                    'registration:id,container_number,freight_forwarder_id,container_size_id,container_type_id,no_do_jo,shipper_tenant',
+                    'registration:id,container_number,freight_forwarder_id,container_size_id,container_type_id,no_do_jo,shipper_tenant_id',
                     'registration.freightForwarders:id,name',
                     'registration.size:id,code,description',
                     'registration.type:id,code,description',
@@ -660,7 +683,7 @@ class RegistrationController extends Controller
                         'id'                => $sr->registration->id,
                         'container_number'  => $sr->registration->container_number,
                         'no_do_jo'          => $sr->registration->no_do_jo,
-                        'shipper_tenant'    => $sr->registration->shipper_tenant,
+                        'shipper_tenant'    => $sr->registration->shipper_tenant_id,
                         'freight_forwarder' => $sr->registration->freightForwarders,
                         'size'              => $sr->registration->size,
                         'type'              => $sr->registration->type,
@@ -702,8 +725,76 @@ class RegistrationController extends Controller
                 ];
             })->values();
 
+            // ─── Added Dashboard Stats ───────────────────────────────
+            // Container Masuk = registrasi yang lolo_record pertamanya (LIFT_OFF) pada bulan ini
+            $monthlyIn = Registration::whereHas('loloRecords', function($q) use ($startOfMonth, $endOfMonth) {
+                $q->where('operation_type', 'LIFT_OFF')
+                  ->whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
+            })->count();
+            
+            // Container Keluar = registrasi CLOSED yang storage record terakhirnya (end_date) pada bulan ini
+            $monthlyOut = Registration::where('record_status', 'CLOSED')
+                ->whereHas('storageRecords', function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->whereBetween('end_date', [$startOfMonth, $endOfMonth]);
+                })->count();
+
+            // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month
+            $loloRevenue = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth])->sum('tariff_price');
+            $storageRevenue = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth])->sum('total_storage_cost');
+            $projectedRevenue = $loloRevenue + $storageRevenue;
+
+            // ─── Added Activities (Timeline) ─────────────────────────
+            // Only use LoloRecords but enrich them with location info from StorageRecords
+            $activities = LoloRecord::with([
+                    'registration:id,container_number,freight_forwarder_id,shipper_tenant_id',
+                    'registration.freightForwarders:id,name',
+                    'registration.shipperTenant:id,name',
+                    'registration.storageRecords' => function($q) {
+                        $q->with(['yard', 'block'])->orderBy('moved_at', 'desc');
+                    },
+                    'createdBy:id,name'
+                ])
+                ->orderBy('lolo_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->map(function($l) {
+                    // Find the relevant storage record for this lolo
+                    $location = '-';
+                    if ($l->operation_type === 'LIFT_OFF') {
+                        // For entry, it's usually the first storage record
+                        $storage = $l->registration->storageRecords->where('moved_at', $l->lolo_at)->first() 
+                                   ?? $l->registration->storageRecords->first();
+                        $location = $storage ? ($storage->yard->code . ' - ' . $storage->block->block_code . $storage->pos_length . $storage->pos_width) : '-';
+                    } else {
+                        // For exit, it's the one that has an end_date (or the latest one)
+                        $storage = $l->registration->storageRecords->whereNotNull('end_date')->first()
+                                   ?? $l->registration->storageRecords->first();
+                        $location = $storage ? ($storage->yard->code . ' - ' . $storage->block->block_code . $storage->pos_length . $storage->pos_width) : '-';
+                    }
+
+                    return [
+                        'type' => 'LOLO',
+                        'operation' => $l->operation_type,
+                        'container_number' => $l->registration->container_number,
+                        'ff' => $l->registration->freightForwarders->name ?? '-',
+                        'tenant' => $l->registration->shipperTenant->name ?? '-',
+                        'vehicle' => ($l->vehicle_type ?? '-') . ' / ' . ($l->vehicle_number ?? '-'),
+                        'location' => $location,
+                        'time' => $l->lolo_at,
+                        'operator' => $l->createdBy->name ?? '-',
+                    ];
+                });
+
             return response()->json([
-                'data'    => $result,
+                'data'    => [
+                    'yards' => $result,
+                    'stats' => [
+                        'monthly_in' => $monthlyIn,
+                        'monthly_out' => $monthlyOut,
+                        'projected_revenue' => $projectedRevenue,
+                    ],
+                    'activities' => $activities
+                ],
                 'message' => 'Berhasil mengambil data yard map',
             ], 200);
         } catch (QueryException $e) {

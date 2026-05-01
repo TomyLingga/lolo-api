@@ -46,4 +46,8 @@ class Registration extends Model
     {
         return $this->belongsTo(Package::class);
     }
+
+    public function shipperTenant() {
+        return $this->belongsTo(FreightForwarders::class, 'shipper_tenant_id');
+    }
 }

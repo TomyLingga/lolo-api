@@ -51,7 +51,6 @@ class WarehouseBeritaAcaraController extends Controller
         $year  = now()->year;
 
         $count = WarehouseBeritaAcara::whereYear('ba_date', $year)
-            ->whereMonth('ba_date', now()->month)
             ->count() + 1;
 
         return sprintf('BA-GUDANG/SMNT/%02d/%s/%d', $count, $month, $year);
@@ -91,9 +90,7 @@ class WarehouseBeritaAcaraController extends Controller
         try {
             $data = $this->buildQuery($request)->get();
 
-            return $data->isEmpty()
-                ? response()->json(['message' => $this->messageMissing], 404)
-                : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+            return response()->json(['data' => $data, 'message' => $this->messageAll], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -222,8 +219,8 @@ class WarehouseBeritaAcaraController extends Controller
                 }
             }
 
-            // Hitung subtotal chamber
-            $chamberSubtotal = $registrations->sum('subtotal');
+            // Hitung subtotal chamber (menggunakan total_rent_cost yang sudah termasuk pengali bulan)
+            $chamberSubtotal = $registrations->sum('total_rent_cost');
 
             // Hitung biaya tambahan
             $additionalFeesTotal = collect($request->input('additional_fees', []))
@@ -266,7 +263,7 @@ class WarehouseBeritaAcaraController extends Controller
                     'tariff_per_m2'             => $reg->tariff_per_m2,
                     'rent_start'                => $reg->rent_start,
                     'rent_end'                  => $reg->rent_end,
-                    'subtotal'                  => $reg->subtotal,
+                    'subtotal'                  => $reg->total_rent_cost,
                 ]);
 
                 // Tandai registrasi sudah dibuatkan BA
