@@ -33,7 +33,7 @@ class RegistrationController extends Controller
                 $q->where('record_status', 'OPEN')
                   ->where('is_active', true);
             })
-            ->select('pos_length', 'pos_width', 'pos_height')
+            ->select('registration_id', 'pos_length', 'pos_width', 'pos_height')
             ->get();
 
         return response()->json([
