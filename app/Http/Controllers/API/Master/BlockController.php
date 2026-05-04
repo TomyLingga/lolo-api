@@ -16,7 +16,7 @@ class BlockController extends BaseMasterController
 
     protected array $storeRules = [
         'yard_id'    => 'required|exists:yards,id',
-        'block_code' => 'required|string|max:10',
+        'block_code' => 'required|string',
         'max_length' => 'required|integer|min:1',
         'max_width'  => 'required|integer|min:1',
         'max_height' => 'required|integer|min:1',
@@ -24,7 +24,7 @@ class BlockController extends BaseMasterController
     ];
 
     protected array $updateRules = [
-        'block_code' => 'sometimes|required|string|max:10',
+        'block_code' => 'sometimes|required|string',
         'max_length' => 'sometimes|required|integer|min:1',
         'max_width'  => 'sometimes|required|integer|min:1',
         'max_height' => 'sometimes|required|integer|min:1',
@@ -71,7 +71,7 @@ class BlockController extends BaseMasterController
                 $request->all(),
                 array_merge($this->storeRules, [
                     'block_code' => [
-                        'required', 'string', 'max:10',
+                        'required', 'string',
                         Rule::unique('blocks', 'block_code')
                             ->where('yard_id', $request->yard_id),
                     ],
