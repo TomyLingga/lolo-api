@@ -183,6 +183,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('/registrations/{id}/close',       [RegistrationController::class,      'close']);
 
         Route::get('/registrations/{registrationId}/lolo-records',     [LoloRecordController::class,        'index']);
+        Route::get('/lolo-records/{id}',                               [LoloRecordController::class,        'show']);
         Route::post('/registrations/{registrationId}/lolo-records',    [LoloRecordController::class,        'store']);
 
         Route::get('/registrations/{registrationId}/storage-records',  [StorageRecordController::class,     'index']);

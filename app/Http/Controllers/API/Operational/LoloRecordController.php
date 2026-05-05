@@ -22,6 +22,7 @@ class LoloRecordController extends Controller
     private string $messageAll     = 'Berhasil mengambil semua data';
     private string $messageCreate  = 'Berhasil membuat data';
     private string $messageUpdate  = 'Berhasil memperbarui data';
+    private string $messageSuccess = 'Berhasil mengambil data';
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -102,6 +103,21 @@ class LoloRecordController extends Controller
             return $data->isEmpty()
                 ? response()->json(['message' => 'Belum ada lolo record'], 404)
                 : response()->json(['data' => $data, 'message' => $this->messageAll], 200);
+        } catch (QueryException $e) {
+            return $this->queryError($e);
+        }
+    }
+
+    public function show($id)
+    {
+        try {
+            $data = LoloRecord::with(['cargoStatus', 'createdBy', 'registration', 'registration.size', 'registration.type'])->find($id);
+
+            if (! $data) {
+                return response()->json(['message' => $this->messageMissing], 404);
+            }
+
+            return response()->json(['data' => $data, 'message' => $this->messageSuccess], 200);
         } catch (QueryException $e) {
             return $this->queryError($e);
         }
@@ -362,6 +378,10 @@ class LoloRecordController extends Controller
 
             if (! $lolo) {
                 return response()->json(['message' => $this->messageMissing, 'success' => false], 404);
+            }
+
+            if ($request->user()->role !== 'admin') {
+                return response()->json(['message' => 'Hanya admin yang dapat mengubah riwayat LOLO.', 'success' => false], 403);
             }
 
             if ($lolo->registration->record_status === 'CLOSED') {

@@ -472,6 +472,7 @@ class RegistrationController extends Controller
             $validator = Validator::make($request->all(), [
                 'freight_forwarder_id' => 'sometimes|required|exists:freight_forwarders,id',
                 'no_do_jo'             => 'nullable|string|max:100',
+                'container_number'     => 'nullable|string',
                 'shipper_tenant_id'    => 'nullable|exists:freight_forwarders,id',
                 'container_size_id'    => 'sometimes|required|exists:container_sizes,id',
                 'container_type_id'    => 'sometimes|required|exists:container_types,id',
@@ -482,14 +483,69 @@ class RegistrationController extends Controller
                 return response()->json(['message' => $validator->errors()->first(), 'success' => false], 400);
             }
 
+            $oldSize = $data->container_size_id;
+            $oldType = $data->container_type_id;
+            $oldPackage = $data->package_id;
+            $oldFF = $data->freight_forwarder_id;
+
             $data->update([
                 'freight_forwarder_id' => $request->freight_forwarder_id ?? $data->freight_forwarder_id,
-                'no_do_jo'             => $request->has('no_do_jo')          ? $request->no_do_jo          : $data->no_do_jo,
+                'container_number'     => $request->has('container_number') ? $request->container_number : $data->container_number,
+                'no_do_jo'             => $request->has('no_do_jo') ? $request->no_do_jo : $data->no_do_jo,
                 'shipper_tenant_id'    => $request->has('shipper_tenant_id') ? $request->shipper_tenant_id : $data->shipper_tenant_id,
-                'container_size_id'    => $request->container_size_id        ?? $data->container_size_id,
-                'container_type_id'    => $request->container_type_id        ?? $data->container_type_id,
-                'package_id'           => $request->package_id              ?? $data->package_id,
+                'container_size_id'    => $request->container_size_id ?? $data->container_size_id,
+                'container_type_id'    => $request->container_type_id ?? $data->container_type_id,
+                'package_id'           => $request->package_id ?? $data->package_id,
             ]);
+
+            // Recalculate tariffs if key params changed
+            if ($oldSize != $data->container_size_id || $oldType != $data->container_type_id || 
+                $oldPackage != $data->package_id || $oldFF != $data->freight_forwarder_id) {
+                
+                // 1. Update first LIFT_OFF tariff
+                $firstLolo = $data->loloRecords()->where('operation_type', 'LIFT_OFF')->orderBy('lolo_at', 'asc')->first();
+                if ($firstLolo) {
+                    $firstStorage = $data->storageRecords()->orderBy('moved_at', 'asc')->first();
+                    $yardId = $firstStorage ? $firstStorage->yard_id : null;
+                    
+                    if ($yardId) {
+                        $tariffLolo = TariffLolo::where([
+                            'yard_id'           => $yardId,
+                            'container_size_id' => $data->container_size_id,
+                            'container_type_id' => $data->container_type_id,
+                            'cargo_status_id'   => $firstLolo->cargo_status_id,
+                            'package_id'        => $data->package_id,
+                        ])
+                        ->where('is_active', true)
+                        ->where('effective_date', '<=', Carbon::parse($firstLolo->lolo_at)->toDateString())
+                        ->orderBy('effective_date', 'desc')
+                        ->first();
+
+                        if ($tariffLolo) {
+                            $firstLolo->update(['tariff_price' => $tariffLolo->price_lift_off]);
+                        }
+                    }
+                }
+
+                // 2. Update active storage price
+                $activeStorage = $data->storageRecords()->whereNull('end_date')->first();
+                if ($activeStorage) {
+                    $tariffStorage = TariffStorage::where([
+                        'yard_id'           => $activeStorage->yard_id,
+                        'container_size_id' => $data->container_size_id,
+                        'container_type_id' => $data->container_type_id,
+                        'cargo_status_id'   => $activeStorage->cargo_status_id,
+                    ])
+                    ->where('is_active', true)
+                    ->where('effective_date', '<=', Carbon::parse($activeStorage->start_date)->toDateString())
+                    ->orderBy('effective_date', 'desc')
+                    ->first();
+
+                    if ($tariffStorage) {
+                        $activeStorage->update(['storage_price_per_day' => $tariffStorage->price_per_day]);
+                    }
+                }
+            }
 
             DB::commit();
 
