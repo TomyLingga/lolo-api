@@ -62,30 +62,41 @@ class InvoiceController extends Controller
         $storageCost = 0.0;
 
         $storageQuery = $reg->storageRecords();
-        if ($sinceDate) {
-            // Hanya storage record yang mulai pada/setelah sinceDate
-            $storageQuery->where('start_date', '>=', Carbon::parse($sinceDate)->toDateString());
-        }
 
         foreach ($storageQuery->get() as $sr) {
-            if ($sr->end_date) {
-                // Storage sudah selesai — gunakan cost yang sudah dihitung
-                $storageCost += (float) $sr->total_storage_cost;
-            } else {
-                // Storage masih aktif — hitung sampai tanggal invoice
-                $days = (int) Carbon::parse($sr->start_date)->diffInDays($upTo) + 1;
-                // Kurangi free time yang sudah dipakai sebelumnya
-                $freeTimeDays = $reg->package->free_time_days ?? 0;
-                $previousDays = $reg->storageRecords()
-                    ->where('id', '!=', $sr->id)
-                    ->whereNotNull('end_date')
-                    ->where('start_date', '<', $sr->start_date)
-                    ->sum('total_storage_days');
-                $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
-                $freeTimeUsed      = min($days, $freeTimeAvailable);
-                $taxableDays       = max(0, $days - $freeTimeUsed);
-                $storageCost += $taxableDays * (float) $sr->storage_price_per_day;
+            $recordStart = Carbon::parse($sr->start_date);
+            $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $upTo;
+
+            $billEnd   = $recordEnd;
+            $billStart = $sinceDate ? Carbon::parse($sinceDate) : clone $recordStart;
+
+            if ($billStart >= $billEnd && !$billStart->isSameDay($recordStart)) {
+                continue; 
             }
+
+            $freeTimeDays = $reg->package->free_time_days ?? 0;
+            $previousDays = $reg->storageRecords()
+                ->where('id', '!=', $sr->id)
+                ->whereNotNull('end_date')
+                ->where('start_date', '<', $sr->start_date)
+                ->sum('total_storage_days');
+            $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
+
+            $calcCost = function(Carbon $endDate) use ($recordStart, $freeTimeAvailable, $sr) {
+                $d = (int) $recordStart->diffInDays($endDate) + 1;
+                $used = min($d, $freeTimeAvailable);
+                $taxable = max(0, $d - $used);
+                return $taxable * (float) $sr->storage_price_per_day;
+            };
+
+            $costAtEnd = $calcCost($billEnd);
+            $costAtStart = 0;
+            
+            if ($billStart > $recordStart) {
+                $costAtStart = $calcCost($billStart);
+            }
+
+            $storageCost += max(0, $costAtEnd - $costAtStart);
         }
 
         $subtotal = $loloCost + $storageCost;
@@ -252,24 +263,16 @@ class InvoiceController extends Controller
                                ->orWhereNull('registrations.last_invoiced_at');
                         });
                     })
-                    // Kondisi 3: Ada storage aktif (belum end_date) setelah last_invoiced_at
+                    // Kondisi 3: Ada storage aktif (belum end_date) ATAU baru end_date setelah last_invoiced_at
                     ->orWhere(function ($inner) {
                         $inner->whereHas('storageRecords', function ($sr) {
                             $sr->whereNull('end_date')
-                               ->whereColumn('start_date', '>=', DB::raw('COALESCE(registrations.last_invoiced_at, \'1970-01-01\')')); 
+                               ->orWhereColumn('end_date', '>', 'registrations.last_invoiced_at'); 
                         });
                     });
                 })
                 ->orderBy('created_at', 'asc')
                 ->get()
-                // Hapus registrasi CLOSED+invoiced=true yang tidak punya aktivitas baru
-                ->filter(function ($reg) {
-                    if ($reg->record_status === 'CLOSED' && $reg->invoiced) {
-                        // Sudah diinvoice final, skip
-                        return false;
-                    }
-                    return true;
-                })
                 ->map(function ($reg) {
                     $sinceDate = $reg->last_invoiced_at;
                     $costs = $this->calculateRegistrationCosts($reg, $sinceDate);
@@ -278,6 +281,16 @@ class InvoiceController extends Controller
                     $reg->subtotal        = $costs['subtotal'];
                     $reg->billing_since   = $sinceDate; // Info periode tagihan
                     return $reg;
+                })
+                // Hapus registrasi CLOSED+invoiced=true atau yang subtotal tagihannya 0
+                ->filter(function ($reg) {
+                    if ($reg->record_status === 'CLOSED' && $reg->invoiced) {
+                        return false;
+                    }
+                    if ($reg->subtotal <= 0) {
+                        return false;
+                    }
+                    return true;
                 })
                 ->values();
 
@@ -634,35 +647,83 @@ class InvoiceController extends Controller
                 $is20 = str_contains(strtolower($size), '20');
                 $is40 = str_contains(strtolower($size), '40');
 
+                $sinceDate = $ir->billed_from ? Carbon::parse($ir->billed_from) : null;
+                $invoiceDate = Carbon::parse($invoice->invoice_date);
+
                 // Baris Storage Records (RENT CY/PLB)
                 foreach ($reg->storageRecords as $sr) {
-                    if (! $sr->start_date || ! $sr->end_date) continue;
-                    $cargoLabel = strtoupper($sr->cargoStatus->code ?? '');
-                    $yardCode   = $sr->yard->code ?? 'CY';  // Gunakan yard code (CY/PLB)
-                    $dateRange  = Carbon::parse($sr->start_date)->format('d/m/Y')
-                        . ' - ' . Carbon::parse($sr->end_date)->format('d/m/Y');
+                    $recordStart = Carbon::parse($sr->start_date);
+                    $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $invoiceDate;
 
-                    $rows[] = [
-                        'container_number' => $reg->container_number,
-                        'date'             => $dateRange,
-                        'do'               => "RENT {$yardCode} ({$cargoLabel})",
-                        'period'           => $sr->total_storage_days . ' DAYS',
-                        'container_type'   => strtoupper($reg->type->description ?? '-'),
-                        'is_20ft'          => $is20,
-                        'is_40ft'          => $is40,
-                        'qty'              => 1,
-                        'total'            => $sr->total_storage_cost,
-                    ];
+                    $billEnd   = clone $recordEnd;
+                    if ($billEnd > $invoiceDate) $billEnd = clone $invoiceDate;
+                    
+                    $billStart = $sinceDate ? clone $sinceDate : clone $recordStart;
+
+                    if ($billStart >= $billEnd && !$billStart->isSameDay($recordStart)) {
+                        continue; 
+                    }
+
+                    $cargoLabel = strtoupper($sr->cargoStatus->code ?? '');
+                    $yardCode   = $sr->yard->code ?? 'CY';  
+                    
+                    $displayStart = $billStart > $recordStart ? clone $billStart : clone $recordStart;
+                    $displayEnd   = clone $billEnd;
+
+                    $dateRange  = $displayStart->format('d/m/Y') . ' - ' . $displayEnd->format('d/m/Y');
+                    
+                    $freeTimeDays = $reg->package->free_time_days ?? 0;
+                    $previousDays = $reg->storageRecords()
+                        ->where('id', '!=', $sr->id)
+                        ->whereNotNull('end_date')
+                        ->where('start_date', '<', $sr->start_date)
+                        ->sum('total_storage_days');
+                    $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
+
+                    $calcCost = function(Carbon $endDate) use ($recordStart, $freeTimeAvailable, $sr) {
+                        $d = (int) $recordStart->diffInDays($endDate) + 1;
+                        $used = min($d, $freeTimeAvailable);
+                        $taxable = max(0, $d - $used);
+                        return $taxable * (float) $sr->storage_price_per_day;
+                    };
+
+                    $costAtEnd = $calcCost($billEnd);
+                    $costAtStart = 0;
+                    if ($billStart > $recordStart) {
+                        $costAtStart = $calcCost($billStart);
+                    }
+                    $periodCost = max(0, $costAtEnd - $costAtStart);
+
+                    if ($periodCost > 0 || $billStart->isSameDay($recordStart)) {
+                        $daysInPeriod = (int) $displayStart->diffInDays($displayEnd);
+                        if ($displayStart->isSameDay($recordStart)) $daysInPeriod += 1;
+
+                        $rows[] = [
+                            'container_number' => $reg->container_number,
+                            'date'             => $dateRange,
+                            'do'               => "RENT {$yardCode} ({$cargoLabel})",
+                            'period'           => $daysInPeriod . ' DAYS',
+                            'container_type'   => strtoupper($reg->type->description ?? '-'),
+                            'is_20ft'          => $is20,
+                            'is_40ft'          => $is40,
+                            'qty'              => 1,
+                            'total'            => $periodCost,
+                        ];
+                    }
                 }
 
                 // Baris Lolo Records (LIFT ON / LIFT OFF)
                 foreach ($reg->loloRecords->sortBy('lolo_at') as $lr) {
+                    $loloDate = Carbon::parse($lr->lolo_at);
+                    if ($sinceDate && $loloDate <= $sinceDate) continue;
+                    if ($loloDate > $invoiceDate) continue;
+
                     $cargoLabel = strtoupper($lr->cargoStatus->code ?? '');
                     $opLabel    = $lr->operation_type === 'LIFT_ON' ? 'LIFT ON' : 'LIFT OFF';
 
                     $rows[] = [
                         'container_number' => $reg->container_number,
-                        'date'             => Carbon::parse($lr->lolo_at)->format('d/m/Y'),
+                        'date'             => $loloDate->format('d/m/Y'),
                         'do'               => "{$opLabel} ({$cargoLabel})",
                         'period'           => 1,
                         'container_type'   => strtoupper($reg->type->description ?? '-'),
@@ -905,7 +966,7 @@ td {
       <th rowspan="2">DATE</th>
       <th rowspan="2">DO</th>
       <th rowspan="2">PERIOD</th>
-      <th rowspan="2">CONTAINER TYPE</th>
+      <th rowspan="2">TYPE</th>
       <th colspan="2">SIZE</th>
       <th rowspan="2">TOTAL</th>
     </tr>
