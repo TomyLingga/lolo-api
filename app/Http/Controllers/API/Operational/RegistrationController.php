@@ -782,14 +782,16 @@ class RegistrationController extends Controller
             })->values();
 
             // ─── Added Dashboard Stats ───────────────────────────────
-            // Container Masuk = registrasi yang lolo_record pertamanya (LIFT_OFF) pada bulan ini
-            $monthlyIn = Registration::whereHas('loloRecords', function($q) use ($startOfMonth, $endOfMonth) {
-                $q->where('operation_type', 'LIFT_OFF')
-                  ->whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
-            })->count();
+            // Container Masuk = registrasi AKTIF yang LIFT_OFF pertamanya pada bulan ini
+            $monthlyIn = Registration::where('is_active', true)
+                ->whereHas('loloRecords', function($q) use ($startOfMonth, $endOfMonth) {
+                    $q->where('operation_type', 'LIFT_OFF')
+                      ->whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
+                })->count();
             
-            // Container Keluar = registrasi CLOSED yang storage record terakhirnya (end_date) pada bulan ini
+            // Container Keluar = registrasi AKTIF yang CLOSED dengan storage berakhir bulan ini
             $monthlyOut = Registration::where('record_status', 'CLOSED')
+                ->where('is_active', true)
                 ->whereHas('storageRecords', function($q) use ($startOfMonth, $endOfMonth) {
                     $q->whereBetween('end_date', [$startOfMonth, $endOfMonth]);
                 })->count();
@@ -798,6 +800,12 @@ class RegistrationController extends Controller
             $loloRevenue = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth])->sum('tariff_price');
             $storageRevenue = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth])->sum('total_storage_cost');
             $projectedRevenue = $loloRevenue + $storageRevenue;
+
+            // Container OPEN = semua registrasi aktif yang statusnya masih OPEN
+            // (tidak terbatas bulan ini — termasuk yang masuk bulan-bulan sebelumnya)
+            $openCount = Registration::where('record_status', 'OPEN')
+                ->where('is_active', true)
+                ->count();
 
             // ─── Added Activities (Timeline) ─────────────────────────
             // Only use LoloRecords but enrich them with location info from StorageRecords
@@ -845,8 +853,9 @@ class RegistrationController extends Controller
                 'data'    => [
                     'yards' => $result,
                     'stats' => [
-                        'monthly_in' => $monthlyIn,
-                        'monthly_out' => $monthlyOut,
+                        'monthly_in'        => $monthlyIn,
+                        'monthly_out'       => $monthlyOut,
+                        'open_count'        => $openCount,
                         'projected_revenue' => $projectedRevenue,
                     ],
                     'activities' => $activities
