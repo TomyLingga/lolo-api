@@ -667,7 +667,7 @@ class InvoiceController extends Controller
                     $cargoLabel = strtoupper($sr->cargoStatus->code ?? '');
                     $yardCode   = $sr->yard->code ?? 'CY';  
                     
-                    $displayStart = $billStart > $recordStart ? clone $billStart : clone $recordStart;
+                    $displayStart = $billStart > $recordStart ? (clone $billStart)->addDay() : clone $recordStart;
                     $displayEnd   = clone $billEnd;
 
                     $dateRange  = $displayStart->format('d/m/Y') . ' - ' . $displayEnd->format('d/m/Y');
@@ -695,8 +695,7 @@ class InvoiceController extends Controller
                     $periodCost = max(0, $costAtEnd - $costAtStart);
 
                     if ($periodCost > 0 || $billStart->isSameDay($recordStart)) {
-                        $daysInPeriod = (int) $displayStart->diffInDays($displayEnd);
-                        if ($displayStart->isSameDay($recordStart)) $daysInPeriod += 1;
+                        $daysInPeriod = (int) $displayStart->diffInDays($displayEnd) + 1;
 
                         $rows[] = [
                             'container_number' => $reg->container_number,
