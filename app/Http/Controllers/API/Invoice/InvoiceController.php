@@ -40,12 +40,55 @@ class InvoiceController extends Controller
 
     /**
      * Hitung lolo_cost, storage_cost, subtotal per registration.
+     * Jika $sinceDate diisi, hanya hitung aktivitas setelah tanggal tersebut
+     * (untuk penagihan berkala registrasi OPEN).
+     * Jika $invoiceDate diisi, digunakan sebagai batas atas hitung storage aktif.
      */
-    private function calculateRegistrationCosts(Registration $reg): array
-    {
-        $loloCost    = $reg->loloRecords()->sum('tariff_price');
-        $storageCost = $reg->storageRecords()->sum('total_storage_cost');
-        $subtotal    = $loloCost + $storageCost;
+    private function calculateRegistrationCosts(
+        Registration $reg,
+        ?string $sinceDate = null,
+        ?string $invoiceDate = null
+    ): array {
+        $upTo = $invoiceDate ? Carbon::parse($invoiceDate) : Carbon::now();
+
+        // ── LOLO cost ───────────────────────────────────────────────────────
+        $loloQuery = $reg->loloRecords();
+        if ($sinceDate) {
+            $loloQuery->where('lolo_at', '>', $sinceDate);
+        }
+        $loloCost = (float) $loloQuery->sum('tariff_price');
+
+        // ── Storage cost ────────────────────────────────────────────────────
+        $storageCost = 0.0;
+
+        $storageQuery = $reg->storageRecords();
+        if ($sinceDate) {
+            // Hanya storage record yang mulai pada/setelah sinceDate
+            $storageQuery->where('start_date', '>=', Carbon::parse($sinceDate)->toDateString());
+        }
+
+        foreach ($storageQuery->get() as $sr) {
+            if ($sr->end_date) {
+                // Storage sudah selesai — gunakan cost yang sudah dihitung
+                $storageCost += (float) $sr->total_storage_cost;
+            } else {
+                // Storage masih aktif — hitung sampai tanggal invoice
+                $days = (int) Carbon::parse($sr->start_date)->diffInDays($upTo) + 1;
+                // Kurangi free time yang sudah dipakai sebelumnya
+                $freeTimeDays = $reg->package->free_time_days ?? 0;
+                $previousDays = $reg->storageRecords()
+                    ->where('id', '!=', $sr->id)
+                    ->whereNotNull('end_date')
+                    ->where('start_date', '<', $sr->start_date)
+                    ->sum('total_storage_days');
+                $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
+                $freeTimeUsed      = min($days, $freeTimeAvailable);
+                $taxableDays       = max(0, $days - $freeTimeUsed);
+                $storageCost += $taxableDays * (float) $sr->storage_price_per_day;
+            }
+        }
+
+        $subtotal = $loloCost + $storageCost;
 
         return [
             'lolo_cost'    => $loloCost,
@@ -173,8 +216,9 @@ class InvoiceController extends Controller
 
     /**
      * GET /freight-forwarders/{ffId}/registrations/invoiceable
-     * Ambil semua registrasi CLOSED & belum diinvoice milik FF ini.
-     * Dipakai frontend untuk tampilkan pilihan sebelum generate invoice.
+     * Ambil semua registrasi milik FF ini yang bisa diinvoice:
+     *   - CLOSED dan belum pernah diinvoice (perilaku lama), ATAU
+     *   - OPEN/CLOSED dengan aktivitas baru setelah last_invoiced_at
      */
     public function getInvoiceableRegistrations($ffId)
     {
@@ -188,23 +232,54 @@ class InvoiceController extends Controller
             $registrations = Registration::with([
                     'size:id,code,description',
                     'type:id,code,description',
+                    'package:id,free_time_days',
                     'loloRecords.cargoStatus:id,code,description',
                     'storageRecords.cargoStatus:id,code,description',
                     'storageRecords.yard:id,name,code',
                 ])
                 ->where('freight_forwarder_id', $ffId)
-                ->where('record_status', 'CLOSED')
-                ->where('invoiced', false)
                 ->where('is_active', true)
+                ->where(function ($q) {
+                    // Kondisi 1: CLOSED dan belum pernah diinvoice sama sekali
+                    $q->where(function ($inner) {
+                        $inner->where('record_status', 'CLOSED')
+                              ->where('invoiced', false);
+                    })
+                    // Kondisi 2: Ada aktivitas LOLO setelah last_invoiced_at (atau sejak awal)
+                    ->orWhere(function ($inner) {
+                        $inner->whereHas('loloRecords', function ($lr) {
+                            $lr->whereColumn('lolo_at', '>', 'registrations.last_invoiced_at')
+                               ->orWhereNull('registrations.last_invoiced_at');
+                        });
+                    })
+                    // Kondisi 3: Ada storage aktif (belum end_date) setelah last_invoiced_at
+                    ->orWhere(function ($inner) {
+                        $inner->whereHas('storageRecords', function ($sr) {
+                            $sr->whereNull('end_date')
+                               ->whereColumn('start_date', '>=', DB::raw('COALESCE(registrations.last_invoiced_at, \'1970-01-01\')')); 
+                        });
+                    });
+                })
                 ->orderBy('created_at', 'asc')
                 ->get()
+                // Hapus registrasi CLOSED+invoiced=true yang tidak punya aktivitas baru
+                ->filter(function ($reg) {
+                    if ($reg->record_status === 'CLOSED' && $reg->invoiced) {
+                        // Sudah diinvoice final, skip
+                        return false;
+                    }
+                    return true;
+                })
                 ->map(function ($reg) {
-                    $costs = $this->calculateRegistrationCosts($reg);
-                    $reg->lolo_cost    = $costs['lolo_cost'];
-                    $reg->storage_cost = $costs['storage_cost'];
-                    $reg->subtotal     = $costs['subtotal'];
+                    $sinceDate = $reg->last_invoiced_at;
+                    $costs = $this->calculateRegistrationCosts($reg, $sinceDate);
+                    $reg->lolo_cost       = $costs['lolo_cost'];
+                    $reg->storage_cost    = $costs['storage_cost'];
+                    $reg->subtotal        = $costs['subtotal'];
+                    $reg->billing_since   = $sinceDate; // Info periode tagihan
                     return $reg;
-                });
+                })
+                ->values();
 
             if ($registrations->isEmpty()) {
                 return response()->json([
@@ -214,7 +289,7 @@ class InvoiceController extends Controller
 
             // Preview total
             $totalSubtotal = $registrations->sum('subtotal');
-            $totals        = $this->calculateTotals($totalSubtotal, []); // No taxes applied in preview initially
+            $totals        = $this->calculateTotals($totalSubtotal, []);
 
             return response()->json([
                 'freight_forwarder' => $ff,
@@ -255,8 +330,8 @@ class InvoiceController extends Controller
                 return response()->json(['message' => $validator->errors()->first(), 'success' => false], 400);
             }
 
-            // Validasi semua registrasi: milik FF yang sama, CLOSED, belum diinvoice
-            $registrations = Registration::whereIn('id', $request->registration_ids)->get();
+            // Validasi semua registrasi: milik FF yang sama, belum di-final-invoice
+            $registrations = Registration::with('package')->whereIn('id', $request->registration_ids)->get();
 
             foreach ($registrations as $reg) {
                 if ($reg->freight_forwarder_id != $request->freight_forwarder_id) {
@@ -266,16 +341,10 @@ class InvoiceController extends Controller
                     ], 400);
                 }
 
-                if ($reg->record_status !== 'CLOSED') {
+                // Tolak hanya jika CLOSED dan sudah di-invoice final
+                if ($reg->record_status === 'CLOSED' && $reg->invoiced) {
                     return response()->json([
-                        'message' => "Registrasi #{$reg->id} (container: {$reg->container_number}) belum CLOSED.",
-                        'success' => false,
-                    ], 400);
-                }
-
-                if ($reg->invoiced) {
-                    return response()->json([
-                        'message' => "Registrasi #{$reg->id} (container: {$reg->container_number}) sudah pernah diinvoice.",
+                        'message' => "Registrasi #{$reg->id} (container: {$reg->container_number}) sudah pernah diinvoice (CLOSED).",
                         'success' => false,
                     ], 400);
                 }
@@ -284,11 +353,16 @@ class InvoiceController extends Controller
             // Hitung cost per registrasi dan total
             $totalSubtotal = 0;
             $regCosts      = [];
+            $invoiceDate   = $request->invoice_date;
 
             foreach ($registrations as $reg) {
-                $costs           = $this->calculateRegistrationCosts($reg);
-                $regCosts[$reg->id] = $costs;
-                $totalSubtotal  += $costs['subtotal'];
+                $sinceDate = $reg->last_invoiced_at;
+                $costs     = $this->calculateRegistrationCosts($reg, $sinceDate, $invoiceDate);
+                $regCosts[$reg->id] = [
+                    'costs'      => $costs,
+                    'billed_from' => $sinceDate, // Simpan untuk rollback
+                ];
+                $totalSubtotal += $costs['subtotal'];
             }
 
             // Hitung pajak dan grand total menggunakan tax_ids yang dipilih
@@ -300,7 +374,7 @@ class InvoiceController extends Controller
                 'freight_forwarder_id' => $request->freight_forwarder_id,
                 'generated_by'         => $request->user()->id,
                 'invoice_number'       => $this->generateInvoiceNumber(),
-                'invoice_date'         => $request->invoice_date,
+                'invoice_date'         => $invoiceDate,
                 'bank_name'            => $request->bank_name,
                 'swift_code'           => $request->swift_code,
                 'bank_account_name'    => $request->bank_account_name,
@@ -312,9 +386,10 @@ class InvoiceController extends Controller
                 'status'               => 'DRAFT',
             ]);
 
-            // Buat InvoiceRegistration pivot dan tandai registrasi sebagai invoiced
+            // Buat InvoiceRegistration pivot dan update registrasi
             foreach ($registrations as $reg) {
-                $costs = $regCosts[$reg->id];
+                $entry = $regCosts[$reg->id];
+                $costs = $entry['costs'];
 
                 InvoiceRegistration::create([
                     'invoice_id'      => $invoice->id,
@@ -322,9 +397,19 @@ class InvoiceController extends Controller
                     'lolo_cost'       => $costs['lolo_cost'],
                     'storage_cost'    => $costs['storage_cost'],
                     'subtotal'        => $costs['subtotal'],
+                    'billed_from'     => $entry['billed_from'], // Untuk rollback
                 ]);
 
-                $reg->update(['invoiced' => true]);
+                if ($reg->record_status === 'CLOSED') {
+                    // Registrasi CLOSED → tandai selesai, tidak bisa diinvoice lagi
+                    $reg->update([
+                        'invoiced'         => true,
+                        'last_invoiced_at' => $invoiceDate,
+                    ]);
+                } else {
+                    // Registrasi OPEN → update last_invoiced_at saja, bisa diinvoice lagi
+                    $reg->update(['last_invoiced_at' => $invoiceDate]);
+                }
             }
 
             // Simpan pajak ke pivot table invoice_taxes
@@ -480,9 +565,22 @@ class InvoiceController extends Controller
                 ], 400);
             }
 
-            // Kembalikan semua registrasi ke invoiced = false
-            $regIds = $invoice->invoiceRegistrations->pluck('registration_id');
-            Registration::whereIn('id', $regIds)->update(['invoiced' => false]);
+            // Rollback setiap registrasi sesuai statusnya saat invoice dibuat
+            foreach ($invoice->invoiceRegistrations as $ir) {
+                $reg = Registration::find($ir->registration_id);
+                if (! $reg) continue;
+
+                if ($reg->record_status === 'CLOSED') {
+                    // Kembalikan ke belum diinvoice
+                    $reg->update([
+                        'invoiced'         => false,
+                        'last_invoiced_at' => $ir->billed_from,
+                    ]);
+                } else {
+                    // OPEN: kembalikan last_invoiced_at ke sebelum invoice ini
+                    $reg->update(['last_invoiced_at' => $ir->billed_from]);
+                }
+            }
 
             $invoice->delete(); // cascade ke invoice_registrations
 
