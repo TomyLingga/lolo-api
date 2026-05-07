@@ -685,15 +685,75 @@ class RegistrationController extends Controller
     // ─── Dashboard ───────────────────────────────────────────────────────────
 
     /**
-     * GET /dashboard/yard-map?container_number=
+     * PUT /registrations/{id}/reopen
+     * Admin only — reopen a CLOSED registration.
+     * Last storage record (end_date) is re-opened.
+     */
+    public function reopen(int $id)
+    {
+        DB::beginTransaction();
+        try {
+            $reg = Registration::find($id);
+            if (! $reg) {
+                return response()->json(['message' => $this->messageMissing, 'success' => false], 404);
+            }
+            if ($reg->record_status === 'OPEN') {
+                return response()->json(['message' => 'Registrasi sudah berstatus OPEN.', 'success' => false], 400);
+            }
+
+            // Reopen last storage record (re-set end_date to null)
+            $lastStorage = $reg->storageRecords()->latest('moved_at')->first();
+            if ($lastStorage && $lastStorage->end_date) {
+                $lastStorage->update([
+                    'end_date'           => null,
+                    'total_storage_days' => 0,
+                    'total_storage_cost' => 0,
+                ]);
+            }
+
+            $reg->update([
+                'record_status' => 'OPEN',
+                'invoiced'      => false,
+            ]);
+
+            DB::commit();
+            return response()->json([
+                'data'    => $reg->fresh()->load($this->getWith()),
+                'message' => 'Registrasi berhasil dibuka kembali.',
+                'success' => true,
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => $this->messageFail,
+                'err'     => $e->getTrace()[0],
+                'errMsg'  => $e->getMessage(),
+                'success' => false,
+            ], 500);
+        }
+    }
+
+    // ─── Dashboard ───────────────────────────────────────────────────────────
+
+    /**
+     * GET /dashboard/yard-map?container_number=&yard_id=&month=&year=
      * Optimized: single eager-loaded query, PHP-side grouping to eliminate N+1.
      */
     public function yardMap(Request $request)
     {
         try {
             $now = now();
+            // Stats periods
+            $filterMonth = $request->filled('month') ? (int) $request->month : $now->month;
+            $filterYear  = $request->filled('year')  ? (int) $request->year  : $now->year;
+            $filterYardId = $request->filled('yard_id') ? (int) $request->yard_id : null;
+
+            $filterStart = Carbon::create($filterYear, $filterMonth, 1)->startOfMonth();
+            $filterEnd   = Carbon::create($filterYear, $filterMonth, 1)->endOfMonth();
+
+            // Always use current month for open_count and projected_revenue
             $startOfMonth = $now->copy()->startOfMonth();
-            $endOfMonth = $now->copy()->endOfMonth();
+            $endOfMonth   = $now->copy()->endOfMonth();
 
             $containerNumber = $request->filled('container_number')
                 ? strtoupper(trim($request->container_number))
@@ -720,10 +780,14 @@ class RegistrationController extends Controller
             $byBlock = $storageRecords->groupBy('block_id');
 
             // Yards + blocks in one query
-            $yards = \App\Models\Yard::with(['blocks' => fn ($q) => $q->orderBy('block_code')])
+            $yardsQuery = \App\Models\Yard::with(['blocks' => fn ($q) => $q->orderBy('block_code')])
                 ->where('is_active', true)
-                ->orderBy('name')
-                ->get();
+                ->orderBy('name');
+            
+            if ($filterYardId) {
+                $yardsQuery->where('id', $filterYardId);
+            }
+            $yards = $yardsQuery->get();
 
             $result = $yards->map(function ($yard) use ($byBlock, $containerNumber) {
                 $totalCapacity = 0;
@@ -782,30 +846,51 @@ class RegistrationController extends Controller
             })->values();
 
             // ─── Added Dashboard Stats ───────────────────────────────
-            // Container Masuk = registrasi AKTIF yang LIFT_OFF pertamanya pada bulan ini
-            $monthlyIn = Registration::where('is_active', true)
-                ->whereHas('loloRecords', function($q) use ($startOfMonth, $endOfMonth) {
+            // Container Masuk = registrasi AKTIF yang LIFT_OFF pertamanya pada bulan/tahun difilter
+            $monthlyInQuery = Registration::where('is_active', true)
+                ->whereHas('loloRecords', function($q) use ($filterStart, $filterEnd) {
                     $q->where('operation_type', 'LIFT_OFF')
-                      ->whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
-                })->count();
+                      ->whereBetween('lolo_at', [$filterStart, $filterEnd]);
+                });
+            if ($filterYardId) {
+                $monthlyInQuery->whereHas('storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+            }
+            $monthlyIn = $monthlyInQuery->count();
             
-            // Container Keluar = registrasi AKTIF yang CLOSED dengan storage berakhir bulan ini
-            $monthlyOut = Registration::where('record_status', 'CLOSED')
+            // Container Keluar = registrasi AKTIF yang CLOSED dengan storage berakhir bulan/tahun difilter
+            $monthlyOutQuery = Registration::where('record_status', 'CLOSED')
                 ->where('is_active', true)
-                ->whereHas('storageRecords', function($q) use ($startOfMonth, $endOfMonth) {
-                    $q->whereBetween('end_date', [$startOfMonth, $endOfMonth]);
-                })->count();
+                ->whereHas('storageRecords', function($q) use ($filterStart, $filterEnd) {
+                    $q->whereBetween('end_date', [$filterStart, $filterEnd]);
+                });
+            if ($filterYardId) {
+                $monthlyOutQuery->whereHas('storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+            }
+            $monthlyOut = $monthlyOutQuery->count();
 
-            // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month
+            // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month (Live)
             $loloRevenue = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth])->sum('tariff_price');
             $storageRevenue = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth])->sum('total_storage_cost');
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
-            // Container OPEN = semua registrasi aktif yang statusnya masih OPEN
-            // (tidak terbatas bulan ini — termasuk yang masuk bulan-bulan sebelumnya)
+            // Container OPEN = semua registrasi aktif yang statusnya masih OPEN (Live global)
             $openCount = Registration::where('record_status', 'OPEN')
                 ->where('is_active', true)
                 ->count();
+                
+            // Container OPEN filter yard
+            $openCountFiltered = $openCount;
+            if ($filterYardId) {
+                $openCountFiltered = Registration::where('record_status', 'OPEN')
+                    ->where('is_active', true)
+                    ->whereHas('storageRecords', function($q) use ($filterYardId) {
+                        $q->where('yard_id', $filterYardId);
+                    })->count();
+            }
 
             // ─── Added Activities (Timeline) ─────────────────────────
             // Only use LoloRecords but enrich them with location info from StorageRecords
@@ -857,6 +942,8 @@ class RegistrationController extends Controller
                         'monthly_out'       => $monthlyOut,
                         'open_count'        => $openCount,
                         'projected_revenue' => $projectedRevenue,
+                        'open_count_filtered' => $openCountFiltered,
+                        'container_filtered' => $result->sum('total_occupied'),
                     ],
                     'activities' => $activities
                 ],

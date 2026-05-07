@@ -279,12 +279,8 @@ class StorageRecordController extends Controller
                 return response()->json(['message' => $this->messageMissing, 'success' => false], 404);
             }
 
-            if ($storage->registration->record_status === 'CLOSED') {
-                return response()->json([
-                    'message' => 'Tidak dapat mengubah storage record pada registrasi yang sudah CLOSED.',
-                    'success' => false,
-                ], 400);
-            }
+            // Removing the restriction that prevents editing CLOSED registration storage records
+            // so admins can correct data.
 
             $validator = Validator::make($request->all(), [
                 'start_date' => 'sometimes|required|date',
