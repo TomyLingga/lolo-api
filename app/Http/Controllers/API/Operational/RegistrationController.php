@@ -873,8 +873,20 @@ class RegistrationController extends Controller
             $monthlyOut = $monthlyOutQuery->count();
 
             // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month (Live)
-            $loloRevenue = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth])->sum('tariff_price');
-            $storageRevenue = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth])->sum('total_storage_cost');
+            $loloRevenueQuery = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
+            if ($filterYardId) {
+                $loloRevenueQuery->whereHas('registration.storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+            }
+            $loloRevenue = $loloRevenueQuery->sum('tariff_price');
+
+            $storageRevenueQuery = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth]);
+            if ($filterYardId) {
+                $storageRevenueQuery->where('yard_id', $filterYardId);
+            }
+            $storageRevenue = $storageRevenueQuery->sum('total_storage_cost');
+            
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
             // Container OPEN = semua registrasi aktif yang statusnya masih OPEN (Live global)
@@ -944,6 +956,7 @@ class RegistrationController extends Controller
                         'projected_revenue' => $projectedRevenue,
                         'open_count_filtered' => $openCountFiltered,
                         'container_filtered' => $result->sum('total_occupied'),
+                        'capacity_filtered' => $result->sum('total_capacity'),
                     ],
                     'activities' => $activities
                 ],
