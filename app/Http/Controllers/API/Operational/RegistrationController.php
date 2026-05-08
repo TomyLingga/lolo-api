@@ -119,22 +119,37 @@ class RegistrationController extends Controller
      * Query builder dengan semua filter opsional.
      * Dipakai oleh index(), getOpen(), getClosed(), getNotInvoiced().
      */
-    private function buildQuery(Request $request)
+    private function buildQuery(Request $request, string $mode = 'all')
     {
         $query = Registration::with($this->getListWith())->orderBy('id', 'desc');
 
-        // Filter tanggal berdasarkan lolo_at pertama (LIFT_OFF pertama)
-        if ($request->filled('date_from')) {
-            $query->whereHas('loloRecords', function ($q) use ($request) {
-                $q->where('operation_type', 'LIFT_OFF')
-                  ->where('lolo_at', '>=', Carbon::parse($request->date_from)->startOfDay());
-            });
+        // Tab "Semua" (all) tetap tampilkan yang inactive (is_active=false)
+        // Tab lainnya hanya tampilkan yang active
+        if ($mode !== 'all') {
+            $query->where('is_active', true);
         }
 
-        if ($request->filled('date_to')) {
-            $query->whereHas('loloRecords', function ($q) use ($request) {
-                $q->where('operation_type', 'LIFT_OFF')
-                  ->where('lolo_at', '<=', Carbon::parse($request->date_to)->endOfDay());
+        // Tab OPEN tidak perlu difilter berdasarkan tanggal
+        if ($mode !== 'open' && ($request->filled('date_from') || $request->filled('date_to'))) {
+            $dateFrom = $request->filled('date_from') ? Carbon::parse($request->date_from)->startOfDay() : null;
+            $dateTo = $request->filled('date_to') ? Carbon::parse($request->date_to)->endOfDay() : null;
+
+            // Untuk tab CLOSED dan NOT-INVOICED, filter berdasarkan LOLO terakhir (LIFT_ON/Keluar)
+            // Untuk tab ALL, filter berdasarkan LOLO pertama (LIFT_OFF/Masuk)
+            $orderBy = ($mode === 'closed' || $mode === 'not-invoiced') ? 'desc' : 'asc';
+
+            $query->whereHas('loloRecords', function ($q) use ($dateFrom, $dateTo, $orderBy) {
+                $q->where('id', function ($sub) use ($orderBy) {
+                    $sub->select('id')
+                        ->from('lolo_records')
+                        ->whereColumn('registration_id', 'registrations.id')
+                        ->orderBy('lolo_at', $orderBy)
+                        ->orderBy('id', $orderBy)
+                        ->limit(1);
+                });
+
+                if ($dateFrom) $q->where('lolo_at', '>=', $dateFrom);
+                if ($dateTo) $q->where('lolo_at', '<', $dateTo->copy()->addDay()->startOfDay());
             });
         }
 
@@ -181,7 +196,7 @@ class RegistrationController extends Controller
     public function index(Request $request)
     {
         try {
-            $data = $this->buildQuery($request)->get();
+            $data = $this->buildQuery($request, 'all')->get();
 
             return $data->isEmpty()
                 ? response()->json(['message' => $this->messageMissing], 404)
@@ -198,9 +213,8 @@ class RegistrationController extends Controller
     public function getOpen(Request $request)
     {
         try {
-            $data = $this->buildQuery($request)
+            $data = $this->buildQuery($request, 'open')
                 ->where('record_status', 'OPEN')
-                ->where('is_active', true)
                 ->get();
 
             return $data->isEmpty()
@@ -218,7 +232,7 @@ class RegistrationController extends Controller
     public function getClosed(Request $request)
     {
         try {
-            $data = $this->buildQuery($request)
+            $data = $this->buildQuery($request, 'closed')
                 ->where('record_status', 'CLOSED')
                 ->get();
 
@@ -237,10 +251,9 @@ class RegistrationController extends Controller
     public function getNotInvoiced(Request $request)
     {
         try {
-            $data = $this->buildQuery($request)
+            $data = $this->buildQuery($request, 'not-invoiced')
                 ->where('record_status', 'CLOSED')
                 ->where('invoiced', false)
-                ->where('is_active', true)
                 ->get();
 
             return $data->isEmpty()
@@ -849,8 +862,16 @@ class RegistrationController extends Controller
             // Container Masuk = registrasi AKTIF yang LIFT_OFF pertamanya pada bulan/tahun difilter
             $monthlyInQuery = Registration::where('is_active', true)
                 ->whereHas('loloRecords', function($q) use ($filterStart, $filterEnd) {
-                    $q->where('operation_type', 'LIFT_OFF')
-                      ->whereBetween('lolo_at', [$filterStart, $filterEnd]);
+                    $q->where('id', function ($sub) {
+                        $sub->select('id')
+                            ->from('lolo_records')
+                            ->whereColumn('registration_id', 'registrations.id')
+                            ->orderBy('lolo_at', 'asc')
+                            ->orderBy('id', 'asc')
+                            ->limit(1);
+                    })
+                    ->where('lolo_at', '>=', $filterStart)
+                    ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay());
                 });
             if ($filterYardId) {
                 $monthlyInQuery->whereHas('storageRecords', function($q) use ($filterYardId) {
@@ -859,11 +880,20 @@ class RegistrationController extends Controller
             }
             $monthlyIn = $monthlyInQuery->count();
             
-            // Container Keluar = registrasi AKTIF yang CLOSED dengan storage berakhir bulan/tahun difilter
+            // Container Keluar = registrasi AKTIF yang CLOSED dengan LOLO terakhir pada bulan/tahun difilter
             $monthlyOutQuery = Registration::where('record_status', 'CLOSED')
                 ->where('is_active', true)
-                ->whereHas('storageRecords', function($q) use ($filterStart, $filterEnd) {
-                    $q->whereBetween('end_date', [$filterStart, $filterEnd]);
+                ->whereHas('loloRecords', function($q) use ($filterStart, $filterEnd) {
+                    $q->where('id', function ($sub) {
+                        $sub->select('id')
+                            ->from('lolo_records')
+                            ->whereColumn('registration_id', 'registrations.id')
+                            ->orderBy('lolo_at', 'desc')
+                            ->orderBy('id', 'desc')
+                            ->limit(1);
+                    })
+                    ->where('lolo_at', '>=', $filterStart)
+                    ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay());
                 });
             if ($filterYardId) {
                 $monthlyOutQuery->whereHas('storageRecords', function($q) use ($filterYardId) {
@@ -873,19 +903,73 @@ class RegistrationController extends Controller
             $monthlyOut = $monthlyOutQuery->count();
 
             // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month (Live)
-            $loloRevenueQuery = LoloRecord::whereBetween('lolo_at', [$startOfMonth, $endOfMonth]);
+            // Hanya hitung yang BELUM di-invoice (berdasarkan last_invoiced_at)
+            $loloRevenueQuery = LoloRecord::with('registration')
+                ->where('lolo_at', '>=', $startOfMonth)
+                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->whereHas('registration', function($q) {
+                    $q->where('is_active', true);
+                });
+
             if ($filterYardId) {
                 $loloRevenueQuery->whereHas('registration.storageRecords', function($q) use ($filterYardId) {
                     $q->where('yard_id', $filterYardId);
                 });
             }
-            $loloRevenue = $loloRevenueQuery->sum('tariff_price');
 
-            $storageRevenueQuery = StorageRecord::whereBetween('start_date', [$startOfMonth, $endOfMonth]);
+            $loloRevenue = 0;
+            foreach ($loloRevenueQuery->get() as $lr) {
+                $lastInvoicedAt = $lr->registration->last_invoiced_at;
+                // Jika sudah pernah di-invoice dan lolo_at <= last_invoiced_at, lewati
+                if ($lastInvoicedAt && Carbon::parse($lr->lolo_at)->lte(Carbon::parse($lastInvoicedAt))) {
+                    continue;
+                }
+                $loloRevenue += (float) $lr->tariff_price;
+            }
+
+            $storageRevenueQuery = StorageRecord::with(['registration.package'])
+                ->where('end_date', '>=', $startOfMonth)
+                ->where('end_date', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->whereHas('registration', function($q) {
+                    $q->where('is_active', true);
+                });
+
             if ($filterYardId) {
                 $storageRevenueQuery->where('yard_id', $filterYardId);
             }
-            $storageRevenue = $storageRevenueQuery->sum('total_storage_cost');
+
+            $storageRevenue = 0;
+            foreach ($storageRevenueQuery->get() as $sr) {
+                $reg = $sr->registration;
+                $lastInvoicedAt = $reg->last_invoiced_at;
+
+                if (!$lastInvoicedAt) {
+                    $storageRevenue += (float) $sr->total_storage_cost;
+                } else {
+                    $lastInvoicedDate = Carbon::parse($lastInvoicedAt);
+                    $srEndDate        = Carbon::parse($sr->end_date);
+                    $srStartDate      = Carbon::parse($sr->start_date);
+
+                    // Jika end_date <= last_invoiced_at, berarti record ini sudah lunas di-invoice
+                    if ($srEndDate->lte($lastInvoicedDate)) {
+                        continue;
+                    }
+
+                    // Hitung sisa biaya: Total Biaya - Biaya yang sudah di-invoice
+                    $totalDays = (int) $srStartDate->diffInDays($srEndDate) + 1;
+                    
+                    // Berapa hari yang sudah dicover invoice sebelumnya untuk record ini?
+                    $billedDays = 0;
+                    if ($lastInvoicedDate->gte($srStartDate)) {
+                        $billedDays = (int) $srStartDate->diffInDays($lastInvoicedDate) + 1;
+                    }
+
+                    $totalCost  = (float) $sr->calculateCost($totalDays);
+                    $billedCost = (float) $sr->calculateCost($billedDays);
+                    
+                    $storageRevenue += max(0, $totalCost - $billedCost);
+                }
+            }
             
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
@@ -946,6 +1030,33 @@ class RegistrationController extends Controller
                     ];
                 });
 
+            // Lolo Transaction Counts
+            $loloOffCountQuery = LoloRecord::where('operation_type', 'LIFT_OFF')
+                ->where('lolo_at', '>=', $startOfMonth)
+                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->whereHas('registration', function($q) {
+                    $q->where('is_active', true);
+                });
+
+            $loloOnCountQuery = LoloRecord::where('operation_type', 'LIFT_ON')
+                ->where('lolo_at', '>=', $startOfMonth)
+                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->whereHas('registration', function($q) {
+                    $q->where('is_active', true);
+                });
+
+            if ($filterYardId) {
+                $loloOffCountQuery->whereHas('registration.storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+                $loloOnCountQuery->whereHas('registration.storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+            }
+
+            $loloOffCount = $loloOffCountQuery->count();
+            $loloOnCount  = $loloOnCountQuery->count();
+
             return response()->json([
                 'data'    => [
                     'yards' => $result,
@@ -953,6 +1064,8 @@ class RegistrationController extends Controller
                         'monthly_in'        => $monthlyIn,
                         'monthly_out'       => $monthlyOut,
                         'open_count'        => $openCount,
+                        'lolo_off_count'    => $loloOffCount,
+                        'lolo_on_count'     => $loloOnCount,
                         'projected_revenue' => $projectedRevenue,
                         'open_count_filtered' => $openCountFiltered,
                         'container_filtered' => $result->sum('total_occupied'),
