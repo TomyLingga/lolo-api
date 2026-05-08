@@ -46,13 +46,15 @@ class WarehouseInvoiceController extends Controller
         ];
     }
 
-    private function generateInvoiceNumber(): string
+    private function generateInvoiceNumber(string $date): string
     {
         $roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
-        $month = $roman[now()->month - 1];
-        $year  = now()->year;
+        $carbonDate = Carbon::parse($date);
+        $month = $roman[$carbonDate->month - 1];
+        $year  = $carbonDate->year;
 
         $count = WarehouseInvoice::whereYear('invoice_date', $year)
+            ->whereMonth('invoice_date', $carbonDate->month)
             ->count() + 1;
 
         return sprintf('SMNT/inv/%03d/%s/%d', $count, $month, $year);
@@ -282,7 +284,7 @@ class WarehouseInvoiceController extends Controller
             $invoice = WarehouseInvoice::create([
                 'freight_forwarder_id' => $request->freight_forwarder_id,
                 'warehouse_id'         => $request->warehouse_id,
-                'invoice_number'       => $this->generateInvoiceNumber(),
+                'invoice_number'       => $this->generateInvoiceNumber($request->invoice_date),
                 'spk_name'             => $request->spk_name,
                 'spk_number'           => $request->spk_number,
                 'spk_date'             => $request->spk_date,

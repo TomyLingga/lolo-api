@@ -157,14 +157,15 @@ class InvoiceController extends Controller
     /**
      * Generate nomor invoice: SMNT/PORT/{urut}/{bulan-romawi}/{tahun}
      */
-    private function generateInvoiceNumber(): string
+    private function generateInvoiceNumber(string $date): string
     {
         $roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
-        $month = $roman[now()->month - 1];
-        $year  = now()->year;
+        $carbonDate = Carbon::parse($date);
+        $month = $roman[$carbonDate->month - 1];
+        $year  = $carbonDate->year;
 
         $count = Invoice::whereYear('invoice_date', $year)
-                        ->whereMonth('invoice_date', now()->month)
+                        ->whereMonth('invoice_date', $carbonDate->month)
                         ->count() + 1;
 
         return sprintf('SMNT/PORT/%03d/%s/%d', $count, $month, $year);
@@ -386,7 +387,7 @@ class InvoiceController extends Controller
             $invoice = Invoice::create([
                 'freight_forwarder_id' => $request->freight_forwarder_id,
                 'generated_by'         => $request->user()->id,
-                'invoice_number'       => $this->generateInvoiceNumber(),
+                'invoice_number'       => $this->generateInvoiceNumber($invoiceDate),
                 'invoice_date'         => $invoiceDate,
                 'bank_name'            => $request->bank_name,
                 'swift_code'           => $request->swift_code,
