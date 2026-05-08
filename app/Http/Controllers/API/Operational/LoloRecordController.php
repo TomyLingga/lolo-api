@@ -406,9 +406,10 @@ class LoloRecordController extends Controller
 
             // Recalculate tarif jika cargo_status berubah
             if ($request->filled('cargo_status_id') && $request->cargo_status_id != $lolo->cargo_status_id) {
+                // Find the storage record that was active at the time of this LOLO to get the yard_id
                 $activeStorage = $lolo->registration->storageRecords()
-                    ->whereNull('end_date')
-                    ->latest('moved_at')
+                    ->where('start_date', '<=', $lolo->lolo_at)
+                    ->orderBy('start_date', 'desc')
                     ->first();
 
                 $tariffLolo = TariffLolo::where([

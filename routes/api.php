@@ -104,6 +104,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Container Registration — admin write
         Route::put('/registrations/{id}',              [RegistrationController::class,      'update']);
+        Route::put('/registrations/{id}/reopen',       [RegistrationController::class,      'reopen']);
         Route::delete('/registrations/{id}',           [RegistrationController::class,      'destroy']);
 
         Route::put('/lolo-records/{id}',               [LoloRecordController::class,        'update']);
