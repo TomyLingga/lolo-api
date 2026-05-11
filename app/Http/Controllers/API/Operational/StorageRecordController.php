@@ -284,6 +284,8 @@ class StorageRecordController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'start_date' => 'sometimes|required|date',
+                'end_date'   => 'sometimes|required|date',
+                'moved_at'   => 'sometimes|required|date',
                 'note'       => 'nullable|string',
             ]);
 
@@ -295,13 +297,21 @@ class StorageRecordController extends Controller
                 'note' => $request->has('note') ? $request->note : $storage->note,
             ];
 
-            // Jika start_date diubah dan end_date sudah ada, recalculate
-            if ($request->filled('start_date')) {
-                $updateData['start_date'] = $request->start_date;
+            if ($request->filled('moved_at')) {
+                $updateData['moved_at'] = $request->moved_at;
+            }
 
-                if ($storage->end_date) {
-                    $days = \Carbon\Carbon::parse($request->start_date)
-                        ->diffInDays(\Carbon\Carbon::parse($storage->end_date));
+            // Jika start_date atau end_date diubah, recalculate jika keduanya ada
+            if ($request->filled('start_date') || $request->filled('end_date')) {
+                $startDate = $request->filled('start_date') ? $request->start_date : $storage->start_date;
+                $endDate = $request->filled('end_date') ? $request->end_date : $storage->end_date;
+
+                if ($request->filled('start_date')) $updateData['start_date'] = $request->start_date;
+                if ($request->filled('end_date')) $updateData['end_date'] = $request->end_date;
+
+                if ($startDate && $endDate) {
+                    $days = \Carbon\Carbon::parse($startDate)
+                        ->diffInDays(\Carbon\Carbon::parse($endDate));
 
                     $updateData['total_storage_days'] = $days;
                     $updateData['total_storage_cost'] = $storage->calculateCost($days);
