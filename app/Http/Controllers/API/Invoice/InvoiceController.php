@@ -33,6 +33,7 @@ class InvoiceController extends Controller
             'taxes:id,name,type,value,value_type',
             'invoiceRegistrations.registration.loloRecords.cargoStatus',
             'invoiceRegistrations.registration.storageRecords.cargoStatus',
+            'invoiceRegistrations.registration.storageRecords.yard',
             'invoiceRegistrations.registration.size',
             'invoiceRegistrations.registration.type',
         ];
