@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Operational;
 
 use App\Http\Controllers\Controller;
 use App\Models\Block;
+use App\Models\Invoice;
 use App\Models\LoloRecord;
 use App\Models\Registration;
 use App\Models\RegistrationRemark;
@@ -973,6 +974,18 @@ class RegistrationController extends Controller
             
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
+            // Invoiced Revenue (Realized) - Sum of grand_total from Invoices in this period
+            $invoicedRevenueQuery = Invoice::where('invoice_date', '>=', $startOfMonth)
+                ->where('invoice_date', '<', $endOfMonth->copy()->addDay()->startOfDay());
+
+            if ($filterYardId) {
+                // Filter invoices that have at least one registration in this yard
+                $invoicedRevenueQuery->whereHas('invoiceRegistrations.registration.storageRecords', function($q) use ($filterYardId) {
+                    $q->where('yard_id', $filterYardId);
+                });
+            }
+            $invoicedRevenue = $invoicedRevenueQuery->sum('grand_total');
+
             // Container OPEN = semua registrasi aktif yang statusnya masih OPEN (Live global)
             $openCount = Registration::where('record_status', 'OPEN')
                 ->where('is_active', true)
@@ -1067,6 +1080,7 @@ class RegistrationController extends Controller
                         'lolo_off_count'    => $loloOffCount,
                         'lolo_on_count'     => $loloOnCount,
                         'projected_revenue' => $projectedRevenue,
+                        'invoiced_revenue'  => $invoicedRevenue,
                         'open_count_filtered' => $openCountFiltered,
                         'container_filtered' => $result->sum('total_occupied'),
                         'capacity_filtered' => $result->sum('total_capacity'),

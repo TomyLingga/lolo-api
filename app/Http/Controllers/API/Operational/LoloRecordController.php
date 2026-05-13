@@ -404,11 +404,17 @@ class LoloRecordController extends Controller
 
             $tariffPrice = $lolo->tariff_price;
 
-            // Recalculate tarif jika cargo_status berubah
-            if ($request->filled('cargo_status_id') && $request->cargo_status_id != $lolo->cargo_status_id) {
+            // Recalculate tarif jika cargo_status atau lolo_at berubah
+            if (
+                ($request->filled('cargo_status_id') && $request->cargo_status_id != $lolo->cargo_status_id) ||
+                ($request->filled('lolo_at') && Carbon::parse($request->lolo_at)->ne(Carbon::parse($lolo->lolo_at)))
+            ) {
+                $newCargoStatusId = $request->cargo_status_id ?? $lolo->cargo_status_id;
+                $newLoloAt        = $request->lolo_at ?? $lolo->lolo_at;
+
                 // Find the storage record that was active at the time of this LOLO to get the yard_id
                 $activeStorage = $lolo->registration->storageRecords()
-                    ->where('start_date', '<=', $lolo->lolo_at)
+                    ->where('start_date', '<=', $newLoloAt)
                     ->orderBy('start_date', 'desc')
                     ->first();
 
@@ -416,17 +422,17 @@ class LoloRecordController extends Controller
                         'yard_id'           => $activeStorage?->yard_id,
                         'container_size_id' => $lolo->registration->container_size_id,
                         'container_type_id' => $lolo->registration->container_type_id,
-                        'cargo_status_id'   => $request->cargo_status_id,
+                        'cargo_status_id'   => $newCargoStatusId,
                         'package_id'        => $lolo->registration->package_id,
                     ])
                     ->where('is_active', true)
-                    ->where('effective_date', '<=', Carbon::parse($lolo->lolo_at)->toDateString())
+                    ->where('effective_date', '<=', Carbon::parse($newLoloAt)->toDateString())
                     ->orderBy('effective_date', 'desc')
                     ->first();
 
                 if (! $tariffLolo) {
                     return response()->json([
-                        'message' => 'Tarif Lolo tidak ditemukan untuk cargo status yang baru.',
+                        'message' => 'Tarif Lolo tidak ditemukan untuk kombinasi data yang baru.',
                         'success' => false,
                     ], 404);
                 }
