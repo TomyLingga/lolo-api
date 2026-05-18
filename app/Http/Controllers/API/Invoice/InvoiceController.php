@@ -36,6 +36,7 @@ class InvoiceController extends Controller
             'invoiceRegistrations.registration.storageRecords.yard',
             'invoiceRegistrations.registration.size',
             'invoiceRegistrations.registration.type',
+            'invoiceRegistrations.registration.package',
         ];
     }
 
@@ -630,6 +631,7 @@ class InvoiceController extends Controller
                 'generatedBy',
                 'invoiceRegistrations.registration.size',
                 'invoiceRegistrations.registration.type',
+                'invoiceRegistrations.registration.package',
                 'invoiceRegistrations.registration.loloRecords.cargoStatus',
                 'invoiceRegistrations.registration.storageRecords.cargoStatus',
                 'invoiceRegistrations.registration.storageRecords.yard',
