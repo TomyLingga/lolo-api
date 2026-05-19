@@ -513,31 +513,41 @@ class RegistrationController extends Controller
             ]);
 
             // Recalculate tariffs if key params changed
-            if ($oldSize != $data->container_size_id || $oldType != $data->container_type_id || 
+            if ($oldSize != $data->container_size_id || $oldType != $data->container_type_id ||
                 $oldPackage != $data->package_id || $oldFF != $data->freight_forwarder_id) {
-                
-                // 1. Update first LIFT_OFF tariff
-                $firstLolo = $data->loloRecords()->where('operation_type', 'LIFT_OFF')->orderBy('lolo_at', 'asc')->first();
-                if ($firstLolo) {
-                    $firstStorage = $data->storageRecords()->orderBy('moved_at', 'asc')->first();
-                    $yardId = $firstStorage ? $firstStorage->yard_id : null;
-                    
-                    if ($yardId) {
-                        $tariffLolo = TariffLolo::where([
-                            'yard_id'           => $yardId,
-                            'container_size_id' => $data->container_size_id,
-                            'container_type_id' => $data->container_type_id,
-                            'cargo_status_id'   => $firstLolo->cargo_status_id,
-                            'package_id'        => $data->package_id,
-                        ])
-                        ->where('is_active', true)
-                        ->where('effective_date', '<=', Carbon::parse($firstLolo->lolo_at)->toDateString())
-                        ->orderBy('effective_date', 'desc')
+
+                // 1. Update ALL lolo records (LIFT_OFF & LIFT_ON)
+                $allLolos = $data->loloRecords()->orderBy('lolo_at', 'asc')->get();
+                $storageRecords = $data->storageRecords()->orderBy('start_date', 'asc')->get();
+
+                foreach ($allLolos as $lr) {
+                    $loloDate = Carbon::parse($lr->lolo_at)->toDateString();
+
+                    // Cari storage record yang relevan saat lolo terjadi untuk mendapatkan yard_id
+                    $relevantStorage = $storageRecords
+                        ->filter(fn($sr) => $sr->start_date <= $loloDate)
+                        ->sortByDesc('start_date')
                         ->first();
 
-                        if ($tariffLolo) {
-                            $firstLolo->update(['tariff_price' => $tariffLolo->price_lift_off]);
-                        }
+                    if (! $relevantStorage) continue;
+
+                    $tariffLolo = TariffLolo::where([
+                        'yard_id'           => $relevantStorage->yard_id,
+                        'container_size_id' => $data->container_size_id,
+                        'container_type_id' => $data->container_type_id,
+                        'cargo_status_id'   => $lr->cargo_status_id,
+                        'package_id'        => $data->package_id,
+                    ])
+                    ->where('is_active', true)
+                    ->where('effective_date', '<=', $loloDate)
+                    ->orderBy('effective_date', 'desc')
+                    ->first();
+
+                    if ($tariffLolo) {
+                        $newPrice = $lr->operation_type === 'LIFT_OFF'
+                            ? $tariffLolo->price_lift_off
+                            : $tariffLolo->price_lift_on;
+                        $lr->update(['tariff_price' => $newPrice]);
                     }
                 }
 

@@ -58,6 +58,8 @@ class InvoiceController extends Controller
         if ($sinceDate) {
             $loloQuery->where('lolo_at', '>', $sinceDate);
         }
+        // Hanya hitung lolo yang terjadi sampai tanggal invoice
+        $loloQuery->where('lolo_at', '<=', $upTo->toDateString());
         $loloCost = (float) $loloQuery->sum('tariff_price');
 
         // ── Storage cost ────────────────────────────────────────────────────
@@ -67,6 +69,12 @@ class InvoiceController extends Controller
 
         foreach ($storageQuery->get() as $sr) {
             $recordStart = Carbon::parse($sr->start_date);
+
+            // Skip storage record yang belum mulai sampai tanggal invoice
+            if ($recordStart > $upTo) {
+                continue;
+            }
+
             $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $upTo;
 
             $billEnd   = $recordEnd;
@@ -657,6 +665,12 @@ class InvoiceController extends Controller
                 // Baris Storage Records (RENT CY/PLB)
                 foreach ($reg->storageRecords as $sr) {
                     $recordStart = Carbon::parse($sr->start_date);
+
+                    // Skip storage record yang belum mulai sampai tanggal invoice
+                    if ($recordStart > $invoiceDate) {
+                        continue;
+                    }
+
                     $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $invoiceDate;
 
                     $billEnd   = clone $recordEnd;
