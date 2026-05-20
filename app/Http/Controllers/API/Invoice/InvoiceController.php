@@ -715,11 +715,15 @@ class InvoiceController extends Controller
                     if ($periodCost > 0 || $billStart->isSameDay($recordStart)) {
                         $daysInPeriod = (int) $displayStart->diffInDays($displayEnd) + 1;
 
+                        // Harga satuan: total / hari (untuk storage) atau tarif per unit (untuk lolo)
+                        $unitPrice = $daysInPeriod > 0 ? round($periodCost / $daysInPeriod) : 0;
+
                         $rows[] = [
                             'container_number' => $reg->container_number,
                             'date'             => $dateRange,
                             'do'               => "RENT {$yardCode} ({$cargoLabel})",
                             'period'           => $daysInPeriod . ' DAYS',
+                            'unit_price'       => $unitPrice,
                             'container_type'   => strtoupper($reg->type->description ?? '-'),
                             'is_20ft'          => $is20,
                             'is_40ft'          => $is40,
@@ -743,6 +747,7 @@ class InvoiceController extends Controller
                         'date'             => $loloDate->format('d/m/Y'),
                         'do'               => "{$opLabel} ({$cargoLabel})",
                         'period'           => 1,
+                        'unit_price'       => (float) $lr->tariff_price,
                         'container_type'   => strtoupper($reg->type->description ?? '-'),
                         'is_20ft'          => $is20,
                         'is_40ft'          => $is40,
@@ -834,8 +839,9 @@ class InvoiceController extends Controller
         $rowsHtml = '';
         $i = 0;
         foreach ($rows as $r) {
-            $bg    = ($i % 2 === 0) ? '#ffffff' : '#f2f2f2';
-            $total = 'Rp&nbsp;' . number_format($r['total'], 0, ',', '.');
+            $bg       = ($i % 2 === 0) ? '#ffffff' : '#f2f2f2';
+            $total    = 'Rp&nbsp;' . number_format($r['total'], 0, ',', '.');
+            $unitPrice = 'Rp&nbsp;' . number_format($r['unit_price'] ?? 0, 0, ',', '.');
             $col20 = $r['is_20ft']
                 ? '<td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">1</td><td style="border:0.5px solid #bbb;padding:4px 6px;"></td>'
                 : '<td style="border:0.5px solid #bbb;padding:4px 6px;"></td><td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">1</td>';
@@ -845,6 +851,7 @@ class InvoiceController extends Controller
                 . '<td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">' . $r['date'] . '</td>'
                 . '<td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">' . $r['do'] . '</td>'
                 . '<td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">' . $r['period'] . '</td>'
+                . '<td style="text-align:right;border:0.5px solid #bbb;padding:4px 6px;">' . $unitPrice . '</td>'
                 . '<td style="text-align:center;border:0.5px solid #bbb;padding:4px 6px;">' . $r['container_type'] . '</td>'
                 . $col20
                 . '<td style="text-align:right;border:0.5px solid #bbb;padding:4px 6px;">' . $total . '</td>'
@@ -864,7 +871,7 @@ class InvoiceController extends Controller
                 : $t['name'] . ' (Rp&nbsp;' . number_format($t['value'], 0, ',', '.') . ')';
 
             $taxHtml .= '<tr>'
-                . '<td colspan="6" style="text-align:right;padding:3px 8px;">' . $valueLabel . '</td>'
+                . '<td colspan="7" style="text-align:right;padding:3px 8px;">' . $valueLabel . '</td>'
                 . '<td style="text-align:right;padding:3px 8px;">' . $amount . '</td>'
                 . '</tr>';
         }
@@ -983,6 +990,7 @@ td {
       <th rowspan="2">DATE</th>
       <th rowspan="2">DO</th>
       <th rowspan="2">PERIOD</th>
+      <th rowspan="2">UNIT PRICE</th>
       <th rowspan="2">TYPE</th>
       <th colspan="2">SIZE</th>
       <th rowspan="2">TOTAL</th>
