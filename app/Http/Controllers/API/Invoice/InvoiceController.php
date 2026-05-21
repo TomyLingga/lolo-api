@@ -789,6 +789,9 @@ class InvoiceController extends Controller
             $totalDeduct = $taxSummary['deduct'] ?? 0;
             $grandTotal  = $subtotal + $totalAdd - $totalDeduct;
 
+            ini_set('memory_limit', '1G');
+            set_time_limit(120);
+
             // ─── Build HTML ─────────────────────────────────────────────
             $html = $this->buildInvoiceHtml(
                 $invoice,
