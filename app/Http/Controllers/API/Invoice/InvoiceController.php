@@ -59,7 +59,9 @@ class InvoiceController extends Controller
             $loloQuery->where('lolo_at', '>', $sinceDate);
         }
         // Hanya hitung lolo yang terjadi sampai tanggal invoice
-        $loloQuery->where('lolo_at', '<=', $upTo->toDateString());
+        // Gunakan whereDate() agar membandingkan tanggal saja (bukan datetime),
+        // sehingga LOLO pukul 12:00 pada hari invoice tetap masuk hitungan.
+        $loloQuery->whereDate('lolo_at', '<=', $upTo->toDateString());
         $loloCost = (float) $loloQuery->sum('tariff_price');
 
         // ── Storage cost ────────────────────────────────────────────────────
@@ -71,7 +73,8 @@ class InvoiceController extends Controller
             $recordStart = Carbon::parse($sr->start_date);
 
             // Skip storage record yang belum mulai sampai tanggal invoice
-            if ($recordStart > $upTo) {
+            // Gunakan toDateString() agar tidak terpengaruh oleh jam (time component)
+            if ($recordStart->toDateString() > $upTo->toDateString()) {
                 continue;
             }
 
@@ -759,18 +762,24 @@ class InvoiceController extends Controller
             }
 
             // Hitung breakdown pajak
-            // Hitung breakdown pajak
             // Ambil tax dari relasi invoice (bukan semua tax aktif)
             $invoice->loadMissing('taxes');
 
-            $subtotal     = (float) $invoice->subtotal;
+            // Hitung subtotal DINAMIS dari baris yang sudah dibangun,
+            // agar selalu akurat meski data bertambah setelah invoice dibuat.
+            $subtotal   = array_sum(array_column($rows, 'total'));
             $taxSummary   = [];
             $taxBreakdown = [];
 
             foreach ($invoice->taxes as $tax) {
-                // Gunakan calculated_amount dari pivot yang sudah dihitung saat store()
-                $amount = (float) $tax->pivot->calculated_amount;
-                $type   = strtolower($tax->type);
+                // Recalculate amount berdasarkan subtotal dinamis
+                $taxValue = (float) $tax->pivot->tax_value;
+                $valueType = $tax->pivot->tax_value_type;
+                $amount = $valueType === 'PERCENTAGE'
+                    ? round($subtotal * $taxValue / 100)
+                    : $taxValue;
+
+                $type = strtolower($tax->type);
 
                 if (!isset($taxSummary[$type])) {
                     $taxSummary[$type] = 0;
@@ -780,8 +789,8 @@ class InvoiceController extends Controller
                 $taxBreakdown[] = [
                     'name'       => $tax->name,
                     'type'       => $tax->type,
-                    'value'      => (float) $tax->pivot->tax_value,
-                    'value_type' => $tax->pivot->tax_value_type,
+                    'value'      => $taxValue,
+                    'value_type' => $valueType,
                     'amount'     => $amount,
                 ];
             }
@@ -1010,12 +1019,12 @@ td {
 <div class="totals-inner" style="margin-top:60px;">
   <table>
     <tr>
-      <td colspan="6" style="text-align:right;font-style:italic;">SUB TOTAL</td>
+      <td colspan="7" style="text-align:right;font-style:italic;">SUB TOTAL</td>
       <td style="text-align:right;">' . $fmtSubtotal . '</td>
     </tr>
     ' . $taxHtml . '
     <tr class="total-row">
-      <td colspan="6" style="text-align:right;">TOTAL</td>
+      <td colspan="7" style="text-align:right;">TOTAL</td>
       <td style="text-align:right;">' . $fmtGrandTotal . '</td>
     </tr>
   </table>
