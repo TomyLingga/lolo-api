@@ -659,8 +659,9 @@ class InvoiceController extends Controller
                 $is20 = str_contains(strtolower($size), '20');
                 $is40 = str_contains(strtolower($size), '40');
 
-                $sinceDate = $ir->billed_from ? Carbon::parse($ir->billed_from) : null;
-                $invoiceDate = Carbon::parse($invoice->invoice_date);
+                $sinceDate   = $ir->billed_from ? Carbon::parse($ir->billed_from)->endOfDay() : null;
+                // endOfDay() memastikan event di hari yang sama dengan invoice_date tetap masuk
+                $invoiceDate = Carbon::parse($invoice->invoice_date)->endOfDay();
 
                 // Baris Storage Records (RENT CY/PLB)
                 foreach ($reg->storageRecords as $sr) {
@@ -737,7 +738,7 @@ class InvoiceController extends Controller
                 foreach ($reg->loloRecords->sortBy('lolo_at') as $lr) {
                     $loloDate = Carbon::parse($lr->lolo_at);
                     if ($sinceDate && $loloDate <= $sinceDate) continue;
-                    if ($loloDate > $invoiceDate) continue;
+                    if ($loloDate->toDateString() > $invoiceDate->toDateString()) continue;
 
                     $cargoLabel = strtoupper($lr->cargoStatus->code ?? '');
                     $opLabel    = $lr->operation_type === 'LIFT_ON' ? 'LIFT ON' : 'LIFT OFF';
