@@ -775,9 +775,7 @@ class RegistrationController extends Controller
             $filterStart = Carbon::create($filterYear, $filterMonth, 1)->startOfMonth();
             $filterEnd   = Carbon::create($filterYear, $filterMonth, 1)->endOfMonth();
 
-            // Always use current month for open_count and projected_revenue
-            $startOfMonth = $now->copy()->startOfMonth();
-            $endOfMonth   = $now->copy()->endOfMonth();
+
 
             $containerNumber = $request->filled('container_number')
                 ? strtoupper(trim($request->container_number))
@@ -916,8 +914,8 @@ class RegistrationController extends Controller
             // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month (Live)
             // Hanya hitung yang BELUM di-invoice (berdasarkan last_invoiced_at)
             $loloRevenueQuery = LoloRecord::with('registration')
-                ->where('lolo_at', '>=', $startOfMonth)
-                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->where('lolo_at', '>=', $filterStart)
+                ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay())
                 ->whereHas('registration', function($q) {
                     $q->where('is_active', true);
                 });
@@ -939,8 +937,8 @@ class RegistrationController extends Controller
             }
 
             $storageRevenueQuery = StorageRecord::with(['registration.package'])
-                ->where('end_date', '>=', $startOfMonth)
-                ->where('end_date', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->where('end_date', '>=', $filterStart)
+                ->where('end_date', '<', $filterEnd->copy()->addDay()->startOfDay())
                 ->whereHas('registration', function($q) {
                     $q->where('is_active', true);
                 });
@@ -985,8 +983,8 @@ class RegistrationController extends Controller
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
             // Invoiced Revenue (Realized) - Sum of grand_total from Invoices in this period
-            $invoicedRevenueQuery = Invoice::where('invoice_date', '>=', $startOfMonth)
-                ->where('invoice_date', '<', $endOfMonth->copy()->addDay()->startOfDay());
+            $invoicedRevenueQuery = Invoice::where('invoice_date', '>=', $filterStart)
+                ->where('invoice_date', '<', $filterEnd->copy()->addDay()->startOfDay());
 
             if ($filterYardId) {
                 // Filter invoices that have at least one registration in this yard
@@ -1055,15 +1053,15 @@ class RegistrationController extends Controller
 
             // Lolo Transaction Counts
             $loloOffCountQuery = LoloRecord::where('operation_type', 'LIFT_OFF')
-                ->where('lolo_at', '>=', $startOfMonth)
-                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->where('lolo_at', '>=', $filterStart)
+                ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay())
                 ->whereHas('registration', function($q) {
                     $q->where('is_active', true);
                 });
 
             $loloOnCountQuery = LoloRecord::where('operation_type', 'LIFT_ON')
-                ->where('lolo_at', '>=', $startOfMonth)
-                ->where('lolo_at', '<', $endOfMonth->copy()->addDay()->startOfDay())
+                ->where('lolo_at', '>=', $filterStart)
+                ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay())
                 ->whereHas('registration', function($q) {
                     $q->where('is_active', true);
                 });
