@@ -130,6 +130,22 @@ class InvoiceController extends Controller
         $uniqueTaxIds = array_unique($taxIds);
         $taxesMap     = Tax::whereIn('id', $uniqueTaxIds)->where('is_active', true)->get()->keyBy('id');
         
+        // 1. Hitung DPP (Dasar Pengenaan Pajak) dengan menerapkan semua nominal adjustments
+        $dpp = $subtotal;
+        foreach ($taxIds as $taxId) {
+            $tax = $taxesMap->get($taxId);
+            if (!$tax) continue;
+            if (strtoupper($tax->value_type) === 'NOMINAL') {
+                $amount = (float) $tax->value;
+                if (strtoupper($tax->type) === 'ADD') {
+                    $dpp += $amount;
+                } else {
+                    $dpp -= $amount;
+                }
+            }
+        }
+
+        // 2. Hitung total additions/deductions dan detail pajak (persentase dihitung di akhir dari DPP)
         $totalAdd    = 0;
         $totalDeduct = 0;
         $taxDetails  = [];
@@ -138,9 +154,9 @@ class InvoiceController extends Controller
             $tax = $taxesMap->get($taxId);
             if (!$tax) continue;
 
-            // strtoupper() agar aman dari lowercase/uppercase
+            // Jika PERCENTAGE → hitung dari DPP, jika NOMINAL → pakai langsung
             if (strtoupper($tax->value_type) === 'PERCENTAGE') {
-                $amount = round($subtotal * ($tax->value / 100), 2);
+                $amount = round($dpp * ($tax->value / 100), 2);
             } else {
                 $amount = (float) $tax->value;
             }
