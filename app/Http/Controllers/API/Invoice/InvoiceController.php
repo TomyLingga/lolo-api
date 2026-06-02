@@ -607,6 +607,57 @@ class InvoiceController extends Controller
     }
 
     /**
+     * GET /invoices/{id}/unpay
+     * Kembalikan status PAID → DRAFT (hanya admin).
+     */
+    public function unpay(Request $request, $id)
+    {
+        DB::beginTransaction();
+
+        try {
+            $invoice = Invoice::find($id);
+
+            if (! $invoice) {
+                return response()->json(['message' => $this->messageMissing, 'success' => false], 404);
+            }
+
+            if ($request->user()->role !== 'admin') {
+                return response()->json([
+                    'message' => 'Hanya admin yang dapat mengubah status invoice menjadi DRAFT.',
+                    'success' => false,
+                ], 403);
+            }
+
+            if ($invoice->status !== 'PAID') {
+                return response()->json([
+                    'message' => 'Status invoice bukan PAID.',
+                    'success' => false,
+                ], 400);
+            }
+
+            $invoice->update(['status' => 'DRAFT']);
+
+            DB::commit();
+
+            return response()->json([
+                'data'    => $invoice->fresh(),
+                'message' => 'Status invoice berhasil diubah kembali menjadi DRAFT.',
+                'success' => true,
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => $this->messageFail,
+                'err'     => $e->getTrace()[0],
+                'errMsg'  => $e->getMessage(),
+                'success' => false,
+            ], 500);
+        }
+    }
+
+
+    /**
      * DELETE /invoices/{id}
      * Batalkan invoice DRAFT — kembalikan semua registrasi ke invoiced = false.
      */
@@ -835,10 +886,11 @@ class InvoiceController extends Controller
             $totalDeduct = $taxSummary['deduct'] ?? 0;
             $grandTotal  = $subtotal + $totalAdd - $totalDeduct;
 
-            ini_set('memory_limit', '1G');
-            set_time_limit(120);
+            ini_set('memory_limit', '-1');
+            set_time_limit(0);
 
             // ─── Build HTML ─────────────────────────────────────────────
+
             $html = $this->buildInvoiceHtml(
                 $invoice,
                 $rows,

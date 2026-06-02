@@ -443,6 +443,52 @@ class WarehouseInvoiceController extends Controller
     }
 
     /**
+     * GET /warehouse-invoices/{id}/unpay
+     */
+    public function unpay(Request $request, $id)
+    {
+        DB::beginTransaction();
+
+        try {
+            $invoice = WarehouseInvoice::find($id);
+
+            if (! $invoice) {
+                return response()->json(['message' => $this->messageMissing], 404);
+            }
+
+            if ($request->user()->role !== 'admin') {
+                return response()->json([
+                    'message' => 'Hanya admin yang dapat mengubah status invoice menjadi DRAFT.',
+                    'success' => false,
+                ], 403);
+            }
+
+            if ($invoice->status !== 'PAID') {
+                return response()->json([
+                    'message' => 'Status invoice bukan PAID.',
+                    'success' => false,
+                ], 400);
+            }
+
+            $invoice->update([
+                'status'  => 'DRAFT',
+                'paid_at' => null,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Invoice berhasil diubah kembali menjadi DRAFT.',
+                'success' => true,
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverError($e);
+        }
+    }
+
+
+    /**
      * DELETE /warehouse-invoices/{id}
      * Admin only — nonaktifkan invoice dan kembalikan BA ke invoiced=false.
      */
@@ -487,8 +533,12 @@ class WarehouseInvoiceController extends Controller
 
     public function exportPdf($id)
     {
+        ini_set('memory_limit', '-1');
+        set_time_limit(0);
+
         try {
             $invoice = WarehouseInvoice::with($this->getWith())->find($id);
+
 
             if (! $invoice) {
                 return response()->json(['message' => $this->messageMissing], 404);

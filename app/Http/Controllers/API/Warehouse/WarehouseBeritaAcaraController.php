@@ -498,8 +498,12 @@ class WarehouseBeritaAcaraController extends Controller
 
     public function exportPdf($id)
     {
+        ini_set('memory_limit', '-1');
+        set_time_limit(0);
+
         try {
             $ba = WarehouseBeritaAcara::with([
+
                 'freightForwarder',
                 'warehouse',
                 'baRegistrations',

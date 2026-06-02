@@ -198,6 +198,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/invoices/{id}',                                    [InvoiceController::class, 'show']);
         Route::post('/invoices',                                        [InvoiceController::class, 'store']);
         Route::get('/invoices/{id}/pay',                                [InvoiceController::class, 'pay']);
+        Route::get('/invoices/{id}/unpay',                              [InvoiceController::class, 'unpay']);
         Route::put('/invoices/{id}',                                    [InvoiceController::class, 'update']);
         Route::get('/freight-forwarders/{ffId}/registrations/invoiceable', [InvoiceController::class, 'getInvoiceableRegistrations']);
 
@@ -237,5 +238,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/warehouse-invoices/{id}',                 [WarehouseInvoiceController::class, 'show']);
         Route::post('/warehouse-invoices',                     [WarehouseInvoiceController::class, 'store']);
         Route::get('/warehouse-invoices/{id}/pay',             [WarehouseInvoiceController::class, 'pay']);
+        Route::get('/warehouse-invoices/{id}/unpay',           [WarehouseInvoiceController::class, 'unpay']);
     });
 });
+
