@@ -29,7 +29,7 @@ class StorageRecord extends Model
         return $this->belongsTo(User::class, 'moved_by');
     }
 
-    public function calculateCost($days)
+    public function calculateCost($days, $pricePerDay = null)
     {
         $freeTimeDays = $this->registration->package->free_time_days ?? 0;
         
@@ -43,6 +43,7 @@ class StorageRecord extends Model
         $freeTimeUsed = min($days, $freeTimeAvailable);
         $taxableDays = max(0, $days - $freeTimeUsed);
         
-        return $taxableDays * $this->storage_price_per_day;
+        $rate = $pricePerDay ?? $this->storage_price_per_day;
+        return $taxableDays * $rate;
     }
 }

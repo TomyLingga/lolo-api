@@ -283,6 +283,7 @@ class StorageRecordController extends Controller
             // so admins can correct data.
 
             $validator = Validator::make($request->all(), [
+                'cargo_status_id' => 'sometimes|required|exists:cargo_statuses,id',
                 'start_date' => 'sometimes|required|date',
                 'end_date'   => 'sometimes|required|date',
                 'moved_at'   => 'sometimes|required|date',
@@ -301,6 +302,32 @@ class StorageRecordController extends Controller
                 $updateData['moved_at'] = $request->moved_at;
             }
 
+            // Jika cargo_status_id diubah, recalculate storage_price_per_day
+            $cargoStatusId = $request->filled('cargo_status_id') ? (int) $request->cargo_status_id : $storage->cargo_status_id;
+            if ($request->filled('cargo_status_id') && (int) $request->cargo_status_id !== (int) $storage->cargo_status_id) {
+                $reg = $storage->registration;
+                $newTariff = TariffStorage::where([
+                    'yard_id'           => $storage->yard_id,
+                    'container_size_id' => $reg->container_size_id,
+                    'container_type_id' => $reg->container_type_id,
+                    'cargo_status_id'   => $cargoStatusId,
+                ])
+                ->where('is_active', true)
+                ->where('effective_date', '<=', \Carbon\Carbon::parse($storage->start_date)->toDateString())
+                ->orderBy('effective_date', 'desc')
+                ->first();
+
+                if (! $newTariff) {
+                    return response()->json([
+                        'message' => 'Tarif Storage tidak ditemukan untuk status kargo baru ini.',
+                        'success' => false,
+                    ], 404);
+                }
+
+                $updateData['cargo_status_id']       = $cargoStatusId;
+                $updateData['storage_price_per_day'] = $newTariff->price_per_day;
+            }
+
             // Jika start_date atau end_date diubah, recalculate jika keduanya ada
             if ($request->filled('start_date') || $request->filled('end_date')) {
                 $startDate = $request->filled('start_date') ? $request->start_date : $storage->start_date;
@@ -313,9 +340,17 @@ class StorageRecordController extends Controller
                     $days = \Carbon\Carbon::parse($startDate)
                         ->diffInDays(\Carbon\Carbon::parse($endDate));
 
+                    // Gunakan harga terbaru (sudah terupdate jika cargo_status berubah)
+                    $pricePerDay = $updateData['storage_price_per_day'] ?? $storage->storage_price_per_day;
                     $updateData['total_storage_days'] = $days;
-                    $updateData['total_storage_cost'] = $storage->calculateCost($days);
+                    $updateData['total_storage_cost'] = $storage->calculateCost($days, $pricePerDay);
                 }
+            } elseif (isset($updateData['storage_price_per_day']) && $storage->end_date) {
+                // Cargo status berubah tapi tanggal tidak — recalculate cost dengan tarif baru
+                $days = \Carbon\Carbon::parse($storage->start_date)
+                    ->diffInDays(\Carbon\Carbon::parse($storage->end_date));
+                $updateData['total_storage_days'] = $days;
+                $updateData['total_storage_cost'] = $storage->calculateCost($days, $updateData['storage_price_per_day']);
             }
 
             $storage->update($updateData);
