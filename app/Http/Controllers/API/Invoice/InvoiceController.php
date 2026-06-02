@@ -79,6 +79,9 @@ class InvoiceController extends Controller
             }
 
             $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $upTo;
+            if ($recordEnd > $upTo) {
+                $recordEnd = clone $upTo;
+            }
 
             $billEnd   = $recordEnd;
             $billStart = $sinceDate ? Carbon::parse($sinceDate) : clone $recordStart;
@@ -286,7 +289,7 @@ class InvoiceController extends Controller
      *   - CLOSED dan belum pernah diinvoice (perilaku lama), ATAU
      *   - OPEN/CLOSED dengan aktivitas baru setelah last_invoiced_at
      */
-    public function getInvoiceableRegistrations($ffId)
+    public function getInvoiceableRegistrations($ffId, Request $request)
     {
         try {
             $ff = FreightForwarders::find($ffId);
@@ -294,6 +297,9 @@ class InvoiceController extends Controller
             if (! $ff) {
                 return response()->json(['message' => 'Freight Forwarder tidak ditemukan'], 404);
             }
+
+            $invoiceDate = $request->query('invoice_date');
+            $upTo = $invoiceDate ? Carbon::parse($invoiceDate)->endOfDay() : Carbon::now();
 
             $registrations = Registration::with([
                     'size:id,code,description',
@@ -328,23 +334,46 @@ class InvoiceController extends Controller
                 })
                 ->orderBy('created_at', 'asc')
                 ->get()
-                ->map(function ($reg) {
+                ->map(function ($reg) use ($invoiceDate, $upTo) {
+                    // 1. Tentukan status efektif pada tanggal invoice
+                    $effectiveStatus = $reg->record_status;
+                    if ($reg->record_status === 'CLOSED') {
+                        $lastLolo = $reg->loloRecords->sortByDesc('lolo_at')->first();
+                        $lastLoloDate = $lastLolo ? Carbon::parse($lastLolo->lolo_at)->toDateString() : null;
+                        if ($lastLoloDate && $lastLoloDate > $upTo->toDateString()) {
+                            $effectiveStatus = 'OPEN';
+                        }
+                    }
+
+                    // Temp override status untuk FE
+                    $reg->record_status = $effectiveStatus;
+
                     $sinceDate = $reg->last_invoiced_at;
-                    $costs = $this->calculateRegistrationCosts($reg, $sinceDate);
+                    $costs = $this->calculateRegistrationCosts($reg, $sinceDate, $invoiceDate);
+                    
                     $reg->lolo_cost       = $costs['lolo_cost'];
                     $reg->storage_cost    = $costs['storage_cost'];
                     $reg->subtotal        = $costs['subtotal'];
                     $reg->billing_since   = $sinceDate; // Info periode tagihan
                     return $reg;
                 })
-                // Hapus registrasi CLOSED+invoiced=true atau yang subtotal tagihannya 0
-                ->filter(function ($reg) {
+                ->filter(function ($reg) use ($upTo) {
+                    // Filter 1: Skip registrasi yang pertama kali masuk (first Lolo) SETELAH tanggal invoice
+                    $firstLolo = $reg->loloRecords->sortBy('lolo_at')->first();
+                    if ($firstLolo && Carbon::parse($firstLolo->lolo_at)->toDateString() > $upTo->toDateString()) {
+                        return false;
+                    }
+
+                    // Filter 2: Hapus registrasi CLOSED + invoiced = true
                     if ($reg->record_status === 'CLOSED' && $reg->invoiced) {
                         return false;
                     }
+
+                    // Filter 3: Hapus registrasi dengan subtotal <= 0
                     if ($reg->subtotal <= 0) {
                         return false;
                     }
+
                     return true;
                 })
                 ->values();
@@ -484,7 +513,17 @@ class InvoiceController extends Controller
                     'billed_from'     => $entry['billed_from'], // Untuk rollback
                 ]);
 
+                // Tentukan status efektif pada tanggal invoice
+                $effectiveStatus = $reg->record_status;
                 if ($reg->record_status === 'CLOSED') {
+                    $lastLolo = $reg->loloRecords->sortByDesc('lolo_at')->first();
+                    $lastLoloDate = $lastLolo ? Carbon::parse($lastLolo->lolo_at)->toDateString() : null;
+                    if ($lastLoloDate && $lastLoloDate > $invoiceDate) {
+                        $effectiveStatus = 'OPEN';
+                    }
+                }
+
+                if ($effectiveStatus === 'CLOSED') {
                     // Registrasi CLOSED → tandai selesai, tidak bisa diinvoice lagi
                     $reg->update([
                         'invoiced'         => true,
