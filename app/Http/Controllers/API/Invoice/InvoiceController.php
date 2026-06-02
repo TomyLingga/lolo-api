@@ -930,12 +930,26 @@ class InvoiceController extends Controller
             $taxSummary   = [];
             $taxBreakdown = [];
 
+            // 1. Hitung DPP (Dasar Pengenaan Pajak) dengan menerapkan semua nominal adjustments
+            $dpp = $subtotal;
             foreach ($invoice->taxes as $tax) {
-                // Recalculate amount berdasarkan subtotal dinamis
-                $taxValue = (float) $tax->pivot->tax_value;
+                $taxValue  = (float) $tax->pivot->tax_value;
                 $valueType = $tax->pivot->tax_value_type;
-                $amount = $valueType === 'PERCENTAGE'
-                    ? round($subtotal * $taxValue / 100)
+                if (strtoupper($valueType) === 'NOMINAL') {
+                    if (strtoupper($tax->type) === 'ADD') {
+                        $dpp += $taxValue;
+                    } else {
+                        $dpp -= $taxValue;
+                    }
+                }
+            }
+
+            // 2. Hitung nominal pajak/diskon sesungguhnya (persentase dihitung di akhir dari DPP)
+            foreach ($invoice->taxes as $tax) {
+                $taxValue  = (float) $tax->pivot->tax_value;
+                $valueType = $tax->pivot->tax_value_type;
+                $amount = strtoupper($valueType) === 'PERCENTAGE'
+                    ? round($dpp * $taxValue / 100)
                     : $taxValue;
 
                 $type = strtolower($tax->type);
