@@ -277,7 +277,7 @@ class WarehouseInvoiceController extends Controller
             $subtotal = (float) $bas->sum(fn ($ba) => (float) $ba->calculateSubtotal());
     
             // Hitung pajak
-            $taxIds = $request->input('tax_ids', []);
+            $taxIds = array_unique($request->input('tax_ids', []));
             $totals = $this->calculateTotals($subtotal, $taxIds);
     
             // Buat invoice
