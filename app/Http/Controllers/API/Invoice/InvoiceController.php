@@ -172,16 +172,36 @@ class InvoiceController extends Controller
      */
     private function generateInvoiceNumber(string $date): string
     {
-        $roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+        $roman      = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
         $carbonDate = Carbon::parse($date);
-        $month = $roman[$carbonDate->month - 1];
-        $year  = $carbonDate->year;
+        $month      = $roman[$carbonDate->month - 1];
+        $year       = $carbonDate->year;
+        $prefix     = "SMNT/PORT/";
+        $suffix     = "/{$month}/{$year}";
 
-        $count = Invoice::whereYear('invoice_date', $year)
-                        ->whereMonth('invoice_date', $carbonDate->month)
-                        ->count() + 1;
+        // Ambil nomor sequence tertinggi yang sudah ada untuk bulan/tahun ini.
+        // Menggunakan LIKE pada invoice_number (bukan count/whereYear) agar
+        // invoice yang di-deactivate tetap "mereservasi" nomornya dan tidak
+        // menyebabkan duplikasi nomor.
+        $maxExisting = Invoice::where('invoice_number', 'like', "{$prefix}%{$suffix}")
+            ->get(['invoice_number'])
+            ->map(function ($inv) use ($prefix, $suffix) {
+                // Ekstrak angka dari tengah: "SMNT/PORT/005/V/2026" → 5
+                $middle = str_replace([$prefix, $suffix], '', $inv->invoice_number);
+                return is_numeric($middle) ? (int) $middle : 0;
+            })
+            ->max() ?? 0;
 
-        return sprintf('SMNT/PORT/%03d/%s/%d', $count, $month, $year);
+        $next = $maxExisting + 1;
+
+        // Safety loop: pastikan nomor benar-benar belum dipakai
+        $candidate = sprintf('%s%03d%s', $prefix, $next, $suffix);
+        while (Invoice::where('invoice_number', $candidate)->exists()) {
+            $next++;
+            $candidate = sprintf('%s%03d%s', $prefix, $next, $suffix);
+        }
+
+        return $candidate;
     }
 
     // ─── CRUD ─────────────────────────────────────────────────────────────────
