@@ -61,7 +61,12 @@ abstract class BaseMasterController extends Controller
                 return response()->json(['message' => $validator->errors()->first(), 'success' => false], 400);
             }
 
-            $data = $this->model::create($request->all());
+            $input = $request->all();
+            if (! isset($input['is_active'])) {
+                $input['is_active'] = true;
+            }
+
+            $data = $this->model::create($input);
 
             DB::commit();
 
