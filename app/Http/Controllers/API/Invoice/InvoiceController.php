@@ -359,6 +359,7 @@ class InvoiceController extends Controller
 
         try {
             $validator = Validator::make($request->all(), [
+                'invoice_sequence'      => 'required|integer|min:1',
                 'freight_forwarder_id'  => 'required|exists:freight_forwarders,id',
                 'registration_ids'      => 'required|array|min:1',
                 'registration_ids.*'    => 'required|integer|exists:registrations,id',
@@ -375,6 +376,21 @@ class InvoiceController extends Controller
 
             if ($validator->fails()) {
                 return response()->json(['message' => $validator->errors()->first(), 'success' => false], 400);
+            }
+
+            // Build invoice number dari sequence yang diinput user
+            $roman      = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+            $carbonDate = Carbon::parse($request->invoice_date);
+            $monthRoman = $roman[$carbonDate->month - 1];
+            $invoiceYear = $carbonDate->year;
+            $invoiceNumber = sprintf('SMNT/PORT/%03d/%s/%d', (int) $request->invoice_sequence, $monthRoman, $invoiceYear);
+
+            // Cek apakah nomor invoice sudah digunakan
+            if (Invoice::where('invoice_number', $invoiceNumber)->exists()) {
+                return response()->json([
+                    'message' => "Nomor invoice {$invoiceNumber} sudah digunakan. Gunakan nomor urut yang berbeda.",
+                    'success' => false,
+                ], 422);
             }
 
             // Validasi semua registrasi: milik FF yang sama, belum di-final-invoice
@@ -420,7 +436,7 @@ class InvoiceController extends Controller
             $invoice = Invoice::create([
                 'freight_forwarder_id' => $request->freight_forwarder_id,
                 'generated_by'         => $request->user()->id,
-                'invoice_number'       => $this->generateInvoiceNumber($invoiceDate),
+                'invoice_number'       => $invoiceNumber,
                 'invoice_date'         => $invoiceDate,
                 'bank_name'            => $request->bank_name,
                 'swift_code'           => $request->swift_code,
