@@ -127,12 +127,17 @@ class InvoiceController extends Controller
      */
     private function calculateTotals(float $subtotal, array $taxIds = []): array
     {
-        $taxes       = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
+        $uniqueTaxIds = array_unique($taxIds);
+        $taxesMap     = Tax::whereIn('id', $uniqueTaxIds)->where('is_active', true)->get()->keyBy('id');
+        
         $totalAdd    = 0;
         $totalDeduct = 0;
         $taxDetails  = [];
 
-        foreach ($taxes as $tax) {
+        foreach ($taxIds as $taxId) {
+            $tax = $taxesMap->get($taxId);
+            if (!$tax) continue;
+
             // strtoupper() agar aman dari lowercase/uppercase
             if (strtoupper($tax->value_type) === 'PERCENTAGE') {
                 $amount = round($subtotal * ($tax->value / 100), 2);
@@ -429,7 +434,7 @@ class InvoiceController extends Controller
             }
 
             // Hitung pajak dan grand total menggunakan tax_ids yang dipilih
-            $taxIds = array_unique($request->input('tax_ids', []));
+            $taxIds = $request->input('tax_ids', []);
             $totals = $this->calculateTotals($totalSubtotal, $taxIds);
 
             // Buat Invoice

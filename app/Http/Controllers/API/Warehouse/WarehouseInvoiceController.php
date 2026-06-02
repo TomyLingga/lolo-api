@@ -66,12 +66,17 @@ class WarehouseInvoiceController extends Controller
      */
     private function calculateTotals(float $subtotal, array $taxIds): array
     {
-        $taxes       = Tax::whereIn('id', $taxIds)->where('is_active', true)->get();
+        $uniqueTaxIds = array_unique($taxIds);
+        $taxesMap     = Tax::whereIn('id', $uniqueTaxIds)->where('is_active', true)->get()->keyBy('id');
+        
         $totalAdd    = 0.0;
         $totalDeduct = 0.0;
         $taxDetails  = [];
 
-        foreach ($taxes as $tax) {
+        foreach ($taxIds as $taxId) {
+            $tax = $taxesMap->get($taxId);
+            if (!$tax) continue;
+
             $value     = (float) $tax->value;
             $valueType = strtoupper(trim($tax->value_type));
             $type      = strtoupper(trim($tax->type));
@@ -277,7 +282,7 @@ class WarehouseInvoiceController extends Controller
             $subtotal = (float) $bas->sum(fn ($ba) => (float) $ba->calculateSubtotal());
     
             // Hitung pajak
-            $taxIds = array_unique($request->input('tax_ids', []));
+            $taxIds = $request->input('tax_ids', []);
             $totals = $this->calculateTotals($subtotal, $taxIds);
     
             // Buat invoice
@@ -322,7 +327,7 @@ class WarehouseInvoiceController extends Controller
                     'tax_id'               => $t['id'],
                     'tax_name'             => $t['name'],
                     'tax_value'            => (float) $t['percentage'],
-                    'tax_value_type'       => 'PERCENTAGE',
+                    'tax_value_type'       => $t['value_type'],
                     'tax_type'             => $t['type'],
                     'calculated_amount'    => (float) $t['calculated_amount'],
                 ]);
