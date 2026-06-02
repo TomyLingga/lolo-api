@@ -679,20 +679,70 @@ class InvoiceController extends Controller
                 ], 400);
             }
 
-            // Rollback setiap registrasi sesuai statusnya saat invoice dibuat
+            // 1. Chronological Deletion Check
+            foreach ($invoice->invoiceRegistrations as $ir) {
+                $newerInvoice = InvoiceRegistration::query()
+                    ->where('registration_id', $ir->registration_id)
+                    ->where('invoice_id', '!=', $invoice->id)
+                    ->join('invoices', 'invoice_registrations.invoice_id', '=', 'invoices.id')
+                    ->where('invoices.invoice_date', '>', $invoice->invoice_date)
+                    ->select('invoices.invoice_number', 'invoices.invoice_date')
+                    ->first();
+
+                if ($newerInvoice) {
+                    $reg = Registration::find($ir->registration_id);
+                    $containerNum = $reg ? $reg->container_number : '#' . $ir->registration_id;
+                    return response()->json([
+                        'message' => "Tidak dapat menghapus invoice ini karena kontainer {$containerNum} sudah memiliki invoice yang lebih baru ({$newerInvoice->invoice_number} tanggal " . Carbon::parse($newerInvoice->invoice_date)->format('d/m/Y') . "). Silakan hapus invoice yang lebih baru terlebih dahulu.",
+                        'success' => false,
+                    ], 400);
+                }
+            }
+
+            // 2. Rollback/Update status registrasi secara cerdas (Smart Rollback)
             foreach ($invoice->invoiceRegistrations as $ir) {
                 $reg = Registration::find($ir->registration_id);
                 if (! $reg) continue;
 
-                if ($reg->record_status === 'CLOSED') {
-                    // Kembalikan ke belum diinvoice
+                // Cari invoice lain yang tersisa (yang paling baru)
+                $newestRemaining = InvoiceRegistration::query()
+                    ->where('registration_id', $reg->id)
+                    ->where('invoice_id', '!=', $invoice->id)
+                    ->join('invoices', 'invoice_registrations.invoice_id', '=', 'invoices.id')
+                    ->orderByDesc('invoices.invoice_date')
+                    ->select('invoice_registrations.*', 'invoices.invoice_date')
+                    ->first();
+
+                if ($newestRemaining) {
+                    // Update ke invoice tersisa paling baru
                     $reg->update([
-                        'invoiced'         => false,
-                        'last_invoiced_at' => $ir->billed_from,
+                        'last_invoiced_at' => $newestRemaining->invoice_date,
                     ]);
+
+                    if ($reg->record_status === 'CLOSED') {
+                        $lastLolo = $reg->loloRecords()->where('operation_type', 'LIFT_ON')->latest('lolo_at')->first();
+                        if ($lastLolo) {
+                            $closedDateStr = Carbon::parse($lastLolo->lolo_at)->toDateString();
+                            $remainingDateStr = Carbon::parse($newestRemaining->invoice_date)->toDateString();
+                            if ($remainingDateStr >= $closedDateStr) {
+                                $reg->update(['invoiced' => true]);
+                            } else {
+                                $reg->update(['invoiced' => false]);
+                            }
+                        } else {
+                            $reg->update(['invoiced' => false]);
+                        }
+                    }
                 } else {
-                    // OPEN: kembalikan last_invoiced_at ke sebelum invoice ini
-                    $reg->update(['last_invoiced_at' => $ir->billed_from]);
+                    // Tidak ada invoice lain tersisa, rollback ke keadaan sebelum invoice ini dibuat
+                    if ($reg->record_status === 'CLOSED') {
+                        $reg->update([
+                            'invoiced'         => false,
+                            'last_invoiced_at' => $ir->billed_from,
+                        ]);
+                    } else {
+                        $reg->update(['last_invoiced_at' => $ir->billed_from]);
+                    }
                 }
             }
 
@@ -713,6 +763,7 @@ class InvoiceController extends Controller
                 'errMsg'  => $e->getMessage(),
                 'success' => false,
             ], 500);
+
         }
     }
 
