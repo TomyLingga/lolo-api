@@ -78,9 +78,12 @@ class InvoiceController extends Controller
                 continue;
             }
 
-            $recordEnd   = $sr->end_date ? Carbon::parse($sr->end_date) : clone $upTo;
+            $recordEnd = $sr->end_date ? Carbon::parse($sr->end_date) : clone $upTo;
 
-            $billEnd   = $recordEnd;
+            // ⚠️ Cap $billEnd ke tanggal invoice agar storage yang belum selesai
+            //    (end_date > invoice_date) tidak ikut terhitung melebihi periode invoice.
+            $billEnd = ($recordEnd > $upTo) ? clone $upTo : $recordEnd;
+
             $billStart = $sinceDate ? Carbon::parse($sinceDate) : clone $recordStart;
 
             if ($billStart >= $billEnd && !$billStart->isSameDay($recordStart)) {
@@ -234,7 +237,9 @@ class InvoiceController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = Invoice::with($this->getWith())->orderBy('invoice_date', 'desc');
+            $query = Invoice::with($this->getWith())
+                ->orderBy('invoice_date', 'desc')
+                ->orderBy('invoice_number', 'asc');
 
             if ($request->filled('freight_forwarder_id')) {
                 $query->where('freight_forwarder_id', $request->freight_forwarder_id);

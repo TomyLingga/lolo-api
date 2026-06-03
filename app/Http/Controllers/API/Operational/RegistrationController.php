@@ -911,17 +911,21 @@ class RegistrationController extends Controller
             }
             $monthlyOut = $monthlyOutQuery->count();
 
-            // Projected Revenue = Total Lolo Fees + Total Storage Fees in current month (Live)
-            // Hanya hitung yang BELUM di-invoice (berdasarkan last_invoiced_at)
+            // ─── Live Projected Revenue ──────────────────────────────────────────
+            // Hitung SEMUA aktivitas belum ter-invoice sampai hari ini (tidak terikat filter bulan).
+            // Kegiatan bulan lalu yang belum diinvoice tetap masuk proyeksi bulan ini.
+            $today    = Carbon::now()->endOfDay();
+            $todayStr = Carbon::now()->toDateString();
+
+            // LOLO Revenue (Live): lolo_at <= hari ini, belum di-invoice
             $loloRevenueQuery = LoloRecord::with('registration')
-                ->where('lolo_at', '>=', $filterStart)
-                ->where('lolo_at', '<', $filterEnd->copy()->addDay()->startOfDay())
-                ->whereHas('registration', function($q) {
+                ->whereDate('lolo_at', '<=', $todayStr)
+                ->whereHas('registration', function ($q) {
                     $q->where('is_active', true);
                 });
 
             if ($filterYardId) {
-                $loloRevenueQuery->whereHas('registration.storageRecords', function($q) use ($filterYardId) {
+                $loloRevenueQuery->whereHas('registration.storageRecords', function ($q) use ($filterYardId) {
                     $q->where('yard_id', $filterYardId);
                 });
             }
@@ -929,17 +933,17 @@ class RegistrationController extends Controller
             $loloRevenue = 0;
             foreach ($loloRevenueQuery->get() as $lr) {
                 $lastInvoicedAt = $lr->registration->last_invoiced_at;
-                // Jika sudah pernah di-invoice dan lolo_at <= last_invoiced_at, lewati
+                // Sudah di-invoice jika lolo_at <= last_invoiced_at
                 if ($lastInvoicedAt && Carbon::parse($lr->lolo_at)->lte(Carbon::parse($lastInvoicedAt))) {
                     continue;
                 }
                 $loloRevenue += (float) $lr->tariff_price;
             }
 
+            // Storage Revenue (Live): start_date <= hari ini, termasuk yang masih berjalan (end_date IS NULL)
             $storageRevenueQuery = StorageRecord::with(['registration.package'])
-                ->where('end_date', '>=', $filterStart)
-                ->where('end_date', '<', $filterEnd->copy()->addDay()->startOfDay())
-                ->whereHas('registration', function($q) {
+                ->whereDate('start_date', '<=', $todayStr)
+                ->whereHas('registration', function ($q) {
                     $q->where('is_active', true);
                 });
 
@@ -949,37 +953,40 @@ class RegistrationController extends Controller
 
             $storageRevenue = 0;
             foreach ($storageRevenueQuery->get() as $sr) {
-                $reg = $sr->registration;
+                $reg            = $sr->registration;
                 $lastInvoicedAt = $reg->last_invoiced_at;
+                $recordStart    = Carbon::parse($sr->start_date);
+
+                // Tentukan batas atas penghitungan: end_date jika ada, jika tidak pakai hari ini
+                $recordEnd = $sr->end_date ? Carbon::parse($sr->end_date) : clone $today;
+                // Cap ke hari ini agar storage yang masih berjalan tidak dihitung melewati hari ini
+                $billEnd = ($recordEnd > $today) ? clone $today : $recordEnd;
 
                 if (!$lastInvoicedAt) {
-                    $storageRevenue += (float) $sr->total_storage_cost;
+                    // Belum pernah di-invoice: hitung penuh dari start sampai billEnd
+                    $totalDays = (int) $recordStart->diffInDays($billEnd) + 1;
+                    $storageRevenue += (float) $sr->calculateCost($totalDays);
                 } else {
                     $lastInvoicedDate = Carbon::parse($lastInvoicedAt);
-                    $srEndDate        = Carbon::parse($sr->end_date);
-                    $srStartDate      = Carbon::parse($sr->start_date);
 
-                    // Jika end_date <= last_invoiced_at, berarti record ini sudah lunas di-invoice
-                    if ($srEndDate->lte($lastInvoicedDate)) {
+                    // Jika end_date ada dan end_date <= last_invoiced_at, record ini sudah lunas
+                    if ($sr->end_date && Carbon::parse($sr->end_date)->lte($lastInvoicedDate)) {
                         continue;
                     }
 
-                    // Hitung sisa biaya: Total Biaya - Biaya yang sudah di-invoice
-                    $totalDays = (int) $srStartDate->diffInDays($srEndDate) + 1;
-                    
-                    // Berapa hari yang sudah dicover invoice sebelumnya untuk record ini?
-                    $billedDays = 0;
-                    if ($lastInvoicedDate->gte($srStartDate)) {
-                        $billedDays = (int) $srStartDate->diffInDays($lastInvoicedDate) + 1;
-                    }
+                    // Hitung sisa yang belum di-invoice:
+                    // totalCost(start → billEnd) - billedCost(start → lastInvoicedAt)
+                    $totalDays  = (int) $recordStart->diffInDays($billEnd) + 1;
+                    $billedDays = $lastInvoicedDate->gte($recordStart)
+                        ? (int) $recordStart->diffInDays($lastInvoicedDate) + 1
+                        : 0;
 
                     $totalCost  = (float) $sr->calculateCost($totalDays);
                     $billedCost = (float) $sr->calculateCost($billedDays);
-                    
                     $storageRevenue += max(0, $totalCost - $billedCost);
                 }
             }
-            
+
             $projectedRevenue = $loloRevenue + $storageRevenue;
 
             // Invoiced Revenue (Realized) - Sum of grand_total from Invoices in this period
