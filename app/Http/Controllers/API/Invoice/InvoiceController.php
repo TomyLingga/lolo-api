@@ -889,7 +889,9 @@ class InvoiceController extends Controller
                     $cargoLabel = strtoupper($sr->cargoStatus->code ?? '');
                     $yardCode   = $sr->yard->code ?? 'CY';  
                     
-                    $displayStart = $billStart > $recordStart ? (clone $billStart)->addDay() : clone $recordStart;
+                    $displayStart = $billStart > $recordStart
+                        ? (clone $billStart)->addDay()->startOfDay()
+                        : clone $recordStart;
                     $displayEnd   = clone $billEnd;
 
                     $dateRange  = $displayStart->format('d/m/Y') . ' - ' . $displayEnd->format('d/m/Y');
