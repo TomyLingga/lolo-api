@@ -36,7 +36,13 @@ class StorageRecord extends Model
         $previousDays = $this->registration->storageRecords()
             ->where('id', '!=', $this->id)
             ->whereNotNull('end_date')
-            ->where('start_date', '<', $this->start_date)
+            ->where(function($q) {
+                $q->where('start_date', '<', $this->start_date)
+                  ->orWhere(function($q2) {
+                      $q2->where('start_date', '=', $this->start_date)
+                         ->where('id', '<', $this->id);
+                  });
+            })
             ->sum('total_storage_days');
             
         $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);

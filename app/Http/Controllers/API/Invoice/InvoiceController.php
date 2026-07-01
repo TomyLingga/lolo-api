@@ -94,7 +94,13 @@ class InvoiceController extends Controller
             $previousDays = $reg->storageRecords()
                 ->where('id', '!=', $sr->id)
                 ->whereNotNull('end_date')
-                ->where('start_date', '<', $sr->start_date)
+                ->where(function($q) use ($sr) {
+                    $q->where('start_date', '<', $sr->start_date)
+                      ->orWhere(function($q2) use ($sr) {
+                          $q2->where('start_date', '=', $sr->start_date)
+                             ->where('id', '<', $sr->id);
+                      });
+                })
                 ->sum('total_storage_days');
             $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
 
@@ -900,7 +906,13 @@ class InvoiceController extends Controller
                     $previousDays = $reg->storageRecords()
                         ->where('id', '!=', $sr->id)
                         ->whereNotNull('end_date')
-                        ->where('start_date', '<', $sr->start_date)
+                        ->where(function($q) use ($sr) {
+                            $q->where('start_date', '<', $sr->start_date)
+                              ->orWhere(function($q2) use ($sr) {
+                                  $q2->where('start_date', '=', $sr->start_date)
+                                     ->where('id', '<', $sr->id);
+                              });
+                        })
                         ->sum('total_storage_days');
                     $freeTimeAvailable = max(0, $freeTimeDays - $previousDays);
 
