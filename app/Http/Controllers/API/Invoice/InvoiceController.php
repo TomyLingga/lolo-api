@@ -921,14 +921,31 @@ class InvoiceController extends Controller
                     if ($periodCost > 0 || $billStart->isSameDay($recordStart)) {
                         $daysInPeriod = (int) $displayStart->diffInDays($displayEnd) + 1;
 
-                        // Harga satuan: total / hari (untuk storage) atau tarif per unit (untuk lolo)
-                        $unitPrice = $daysInPeriod > 0 ? round($periodCost / $daysInPeriod) : 0;
+                        // Harga satuan: selalu gunakan tarif harian dari storage record
+                        // (free time hanya mengurangi hari yang ditagih, bukan harganya)
+                        $unitPrice = (float) $sr->storage_price_per_day;
+
+                        // Hitung berapa free days yang jatuh di dalam periode ini
+                        $dUntilEnd = (int) $recordStart->diffInDays($billEnd) + 1;
+                        $freeUsedUntilEnd = min($dUntilEnd, $freeTimeAvailable);
+
+                        $freeUsedUntilStart = 0;
+                        if ($billStart > $recordStart) {
+                            $dUntilStart = (int) $recordStart->diffInDays($billStart) + 1;
+                            $freeUsedUntilStart = min($dUntilStart, $freeTimeAvailable);
+                        }
+                        $freeUsedInPeriod = max(0, $freeUsedUntilEnd - $freeUsedUntilStart);
+
+                        $periodLabel = $daysInPeriod . ' DAYS';
+                        if ($freeUsedInPeriod > 0) {
+                            $periodLabel .= ' (free: ' . $freeUsedInPeriod . ')';
+                        }
 
                         $rows[] = [
                             'container_number' => $reg->container_number,
                             'date'             => $dateRange,
                             'do'               => "RENT {$yardCode} ({$cargoLabel})",
-                            'period'           => $daysInPeriod . ' DAYS',
+                            'period'           => $periodLabel,
                             'unit_price'       => $unitPrice,
                             'container_type'   => strtoupper($reg->type->description ?? '-'),
                             'is_20ft'          => $is20,
